@@ -1,0 +1,5 @@
+streamlit>=1.52
+gspread>=6.0
+pandas>=2.2
+altair>=5.4
+tzdata

@@ -1,0 +1,6 @@
+.streamlit/secrets.toml
+service_account.json
+*.json.key
+__pycache__/
+.venv/
+.DS_Store
