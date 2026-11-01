@@ -58,12 +58,10 @@ def page(ctx: Ctx) -> None:
     st.markdown(f"<div class='stat-line'>{' · '.join(parts)} XP</div>", unsafe_allow_html=True)
 
     counts = logic.period_counts(items, log, ctx.clock)
-    weekly = [it for it in items if it.active and it.good and it.period == "Weekly" and it.target and it.pinned]
+    weekly = [it for it in items if it.active and it.good and it.period == "Weekly"]
     for it in weekly:
         n = counts.get(it.id, 0)
-        st.progress(min(1.0, n / it.target), text=f"{it.name} · {logic.fmt_amount(n, it.unit)}/{it.target}")
-
-    _skills(ctx, items, log)
+        st.progress(min(1.0, n / it.target), text=f"{it.name} · {n}/{it.target}")
 
     noticed = week[week["Kind"] == "Unideal"] if not week.empty else week
     if not noticed.empty:
@@ -84,79 +82,3 @@ def page(ctx: Ctx) -> None:
         st.dataframe(recent[["When", "Recommended", "Outcome", "Path"]], hide_index=True, width="stretch")
 
     refresh_button(ctx, "progress_refresh")
-
-
-def _walk(h: logic.Hierarchy, gid: str, depth: int = 0, trail: frozenset = frozenset()):
-    """(depth, id) for everything under an umbrella, depth-first. A skill under two umbrellas shows under both."""
-    for c in h.children.get(gid, []):
-        if c in trail or not h.items[c].active:
-            continue
-        yield depth, c
-        if h.items[c].group:
-            yield from _walk(h, c, depth + 1, trail | {gid})
-
-
-def _skills(ctx: Ctx, items: list[logic.Item], log) -> None:
-    """Umbrella tree with totals at each level, weekly volume for one skill, and progressions."""
-    h = logic.build_hierarchy(items)
-    roots = [it for it in h.roots() if it.group and it.active]
-    if not roots:
-        return
-    frame = logic.log_frame(log, ctx.clock)
-    today = ctx.clock.today()
-    t_day = logic.totals(h, frame, today, today)
-    t_week = logic.totals(h, frame, ctx.clock.week_start(today), today)
-    t_all = logic.totals(h, frame)
-
-    st.markdown("#### Skills")
-    domains = st.pills("Domain", logic.DOMAINS, selection_mode="multi", key="pd", bind="query-params",
-                       label_visibility="collapsed")
-    for g in [r for r in roots if not domains or r.domain in domains]:
-        with st.expander(f"{g.name} · {logic.fmt_totals(t_week.get(g.id)) or 'nothing yet'} this week"):
-            rows = []
-            for depth, iid in [(0, g.id)] + [(d + 1, i) for d, i in _walk(h, g.id)]:
-                it = h.items[iid]
-                rung = ""
-                if it.group and h.ladder(iid):
-                    cur, rungs = logic.current_rung(h, iid, frame), h.ladder(iid)
-                    rung = f"{cur.name} ({rungs.index(cur) + 1}/{len(rungs)})" if t_all.get(cur.id) else "Not started"
-                rows.append({"Skill": "\u2003" * depth + it.name + (" ▸" if it.group else ""),
-                             "Today": logic.fmt_totals(t_day.get(iid)), "This week": logic.fmt_totals(t_week.get(iid)),
-                             "All time": logic.fmt_totals(t_all.get(iid)), "Rung": rung})
-            table = pd.DataFrame(rows)
-            if not table["Rung"].any():
-                table = table.drop(columns="Rung")
-            st.dataframe(table, hide_index=True, width="stretch")
-
-    st.markdown("#### Weekly volume")
-    options = [it.id for it in sorted(h.items.values(), key=lambda it: it.row)
-               if it.active and (it.group or (it.good and t_all.get(it.id)))]
-    pick = st.selectbox("Skill or umbrella", options, key="pv", bind="query-params",
-                        format_func=lambda i: " · ".join(b for b in (h.items[i].name, h.path(i)) if b))
-    if pick:
-        vol = logic.weekly_volume(h, pick, frame, ctx.clock, weeks=12)
-        metrics = [m for m in ("Reps", "Minutes", "Logs") if m == "Logs" or vol[m].sum()]
-        metric = st.segmented_control("Measure", metrics, default=metrics[0], key="pv_metric",
-                                      label_visibility="collapsed") or metrics[0]
-        if not vol[metric].sum():
-            st.caption("Nothing logged here in the last 12 weeks.")
-        else:
-            chart = (alt.Chart(vol).mark_bar(cornerRadiusTopLeft=4, cornerRadiusTopRight=4, size=14,
-                                             color=DOMAIN_COLORS["Physical"])
-                     .encode(x=alt.X("Week:T", title=None, axis=alt.Axis(format="%-m/%-d", grid=False)),
-                             y=alt.Y(f"{metric}:Q", title=metric, axis=alt.Axis(tickCount=4)),
-                             tooltip=[alt.Tooltip("Week:T", title="Week of", format="%b %-d"),
-                                      alt.Tooltip(f"{metric}:Q")])
-                     .properties(height=200))
-            st.altair_chart(chart, width="stretch")
-            with st.expander("As a table"):
-                st.dataframe(vol.assign(Week=vol["Week"].dt.strftime("%b %-d")), hide_index=True, width="stretch")
-
-    ladders = [it for it in sorted(h.items.values(), key=lambda it: it.row) if it.group and it.active and h.ladder(it.id)]
-    if ladders:
-        st.markdown("#### Progressions")
-        for g in ladders:
-            rungs, cur = h.ladder(g.id), logic.current_rung(h, g.id, frame)
-            pos = rungs.index(cur) + 1 if t_all.get(cur.id) else 0
-            text = f"{g.name}: {cur.name} · rung {pos} of {len(rungs)}" if pos else f"{g.name}: not started"
-            st.progress(pos / len(rungs), text=text)

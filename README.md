@@ -9,37 +9,26 @@ The same code runs on your Mac and, hosted free, on your phone. Both read and wr
 | Page | What it does |
 |---|---|
 | **Guide me** | One question at a time, then **one** action. That action is the most important item you haven't done yet, chosen from your answers. The buttons are **Did it**, **Another option** and **Not now**, and every walk is saved to *Checkins*. |
-| **Today** | **Priorities** first (Floor and High items not done, weekly items behind pace), then your pinned umbrellas, then pinned items by block of the day. Filter by domain or hide what's done. *Noticed* holds the unideal items. **Browse all** finds anything else. Undo removes your last tap. |
-| **Log** | Pick a skill (recent and pinned first; **Other…** to search or drill down umbrella → skill → rung), enter reps and/or time, pick a variant, then **Log**. **Same again** repeats your last set in one tap. |
-| **Trackers** | Your printed weekly grids: days down the side, your columns across, a weekly total at the bottom. Tap a cell to log for that day. **Print week** gives you the paper version, filled in or blank. |
-| **Progress** | Lifetime XP (always the biggest number), your level, XP by day for each domain, weekly goals, your umbrellas with totals at every level, weekly volume for any skill, how far up each progression you are, what you noticed this week, and recent check-ins. |
+| **Today** | Tap an item to log it, grouped by block of the day. *Noticed* holds the unideal items. Undo removes your last tap. |
+| **Progress** | Lifetime XP (always the biggest number), your level, XP by day for each domain, weekly goals, what you noticed this week, and recent check-ins. |
 | **Edit** | Edit what you track, the Guide me tree (with a map and a tree check), and settings. |
 | **Setup** | Mac only. Connect the sheet, get the phone setup block, or quit. |
 
 ## The sheet (you can edit it directly)
 
 - **Items**: what you track.
-  - **Domain** is Physical, Mental or Spiritual. **Kind** is Good, Unideal or Group. **Period** is Daily or Weekly.
-  - A **Group** is an umbrella (e.g. Movement → Hypertrophy → Squats). It can't be logged; it adds up everything under it.
-  - **Parents** lists the umbrellas an item sits under, comma-separated. More than one is fine (Squats sits under Hypertrophy and Endurance), and it still counts once higher up.
-  - **Step** is the item's rung in a progression under its umbrella, 1 = easiest. The app shows your current rung (the hardest one you've logged) and keeps the rest one tap away.
-  - **Measure** is what you enter when logging: Check (one tap), Reps, Time or Both. **Variants** are choices picked when logging, e.g. `Still, Moving, Jump`.
-  - **Target** is how much per period counts as done, counted in **Unit** (Logs, Reps or Minutes), so "100 push-ups a week" works. 0 means no goal, just tracking. **XP** is per log, however many reps.
-  - **Priority** is Floor, High, Normal or Low. **Floor** means non-negotiable. Blank Domain or Priority comes from the umbrella.
-  - **Pinned** puts it on Today. **Block** is the group it appears under there.
+  - **Domain** is Physical, Mental or Spiritual. **Kind** is Good or Unideal. **Period** is Daily or Weekly.
+  - **Target** is how many times per period counts as done. **XP** is per log.
+  - **Priority** is Floor, High, Normal or Low. **Floor** means non-negotiable.
+  - **Block** is the group it appears under on Today.
   - **Tags** are free words such as `5min`, `reset` or `move`.
   - **Counters** applies to unideal items only. It lists the tags Guide me favours after you log one.
-- **Trackers**: one row per column of a weekly grid. **Maps to** is one or more items or umbrellas; **Show** is Auto (reps and/or time, else a tick), Reps, Time or Count.
 - **Questions**: one row per choice. Rows that share a **Node** make one question, and the walk starts at `start`. **Next** is another Node or an Action.
-- **Actions**: **Picks from** is an ordered list of tags, domains, priorities, item names or umbrella names. An umbrella suggests the least-done skill under it this week, at your current rung. Join two with `+` to require both, e.g. `Spiritual+low-energy`. Items already done this period are skipped. **Fallback** shows when nothing is left.
-- **Log**, **Checkins**: written by the app. Log has **Reps**, **Seconds** and **Variant** too.
+- **Actions**: **Picks from** is an ordered list of tags, domains, priorities or item names. Join two with `+` to require both, e.g. `Spiritual+low-energy`. Items already done this period are skipped. **Fallback** shows when nothing is left.
+- **Log**, **Checkins**: written by the app.
 - **Settings**: time zone, the hour the day starts (late-night logs count for the day before), the week's start day, and XP per level.
 
-Rows you type into Items without an ID get one automatically. Item names can't contain commas, since Parents and Maps to are comma-separated; Edit flags this, along with unknown parents and loops.
-
-Filters (domain, hide done, which tracker) live in the page link, e.g. `…/trackers?t=Hypertrophy`, so you can add a Home Screen icon that opens straight to one view.
-
-Sheets made before umbrellas existed are upgraded once, on first open: the new columns are added, the starter skills and umbrellas are appended (only names you don't already have), and Brush teeth, Shower and a few others are filed under them where Parents is blank.
+Rows you type into Items without an ID get one automatically.
 
 ## Setup on your Mac (once)
 
@@ -71,10 +60,10 @@ Optional extra lock: add `app_password = "something"` to the Secrets.
 | File | What it is |
 |---|---|
 | `app.py` | Startup, navigation, local vs. hosted mode |
-| `logic.py` | XP, done-status, umbrellas and totals, priorities, trackers, the tree walker and recommender (no Streamlit, easy to test) |
+| `logic.py` | XP, done-status, the tree walker and recommender (no Streamlit, easy to test) |
 | `store.py` | Google Sheets reads and writes, setup errors |
-| `seed.py` | Starting items, skills, trackers, questions, actions and settings |
-| `views/` | One file per page; `log.py` is also the dialog Today and Trackers open |
+| `seed.py` | Starting items, questions, actions and settings |
+| `views/` | One file per page |
 | `launch.sh`, `One Stop.app` | Mac launcher: finds Python, `git pull`, installs packages when they change, opens the browser |
 
 Settings and your key live in `~/.one-stop/`. Logs are in `~/.one-stop/launcher.log` and `~/.one-stop/app.log`.

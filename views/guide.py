@@ -4,7 +4,6 @@ from __future__ import annotations
 import streamlit as st
 
 import logic
-from views import log as log_view
 from views.common import DOMAIN_ICON, Ctx, log_checkin, log_item
 
 
@@ -60,14 +59,9 @@ def _question(q: logic.Question) -> None:
 def _action(ctx: Ctx, action: logic.Action) -> None:
     ss = st.session_state
     items = ctx.items()
-    log = ctx.log()
-    counts = logic.period_counts(items, log, ctx.clock)
+    counts = logic.period_counts(items, ctx.log(), ctx.clock)
     boosts = logic.counter_boosts(items, counts)
-    frame = logic.log_frame(log, ctx.clock)
-    today = ctx.clock.today()
-    week = {i: t.count for i, t in logic.leaf_totals(frame, ctx.clock.week_start(today), today).items()}
-    skip = logic.off_rungs(logic.build_hierarchy(items), frame)
-    ranked = logic.recommend(action.picks_from, items, counts, boosts, week_logs=week, skip=skip)
+    ranked = logic.recommend(action.picks_from, items, counts, boosts)
     path = " → ".join(f"{n}: {c}" for n, c in ss.g_path)
 
     with st.container(border=True):
@@ -85,12 +79,9 @@ def _action(ctx: Ctx, action: logic.Action) -> None:
         if pick.notes:
             st.write(pick.notes)
         if st.button("Did it", type="primary", icon=":material/check:", width="stretch", key="g_did"):
+            log_item(ctx, pick, "Guide")
             log_checkin(ctx, path, pick.name, "Did it")
             _reset()
-            if pick.measure != "Check" or pick.variants:  # ask for reps/time/variant
-                log_view.open_dialog(ctx, pick.name, scope=[pick.id])
-                return
-            log_item(ctx, pick, "Guide")
             st.rerun()
 
     c1, c2 = st.columns(2)
