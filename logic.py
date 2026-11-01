@@ -782,3 +782,316 @@ def daily_frame(log_df: pd.DataFrame, clock: Clock, days: int = 14) -> pd.DataFr
              .reset_index().rename(columns={"_day": "Day"}))
     out["Day"] = pd.to_datetime(out["Day"])
     return out
+
+
+def to_float(value, default: float = 0.0) -> float:
+    try:
+        return float(str(value).strip())
+    except (TypeError, ValueError):
+        return default
+
+
+def days_since_good_log(log_df: pd.DataFrame, clock: Clock) -> int | None:
+    """Days since the last log that earned XP; None if there's never been one."""
+    if log_df.empty:
+        return None
+    xp = log_df["XP"].map(lambda v: to_int(v, 0))
+    days = [d for d, x in zip(log_days(log_df, clock), xp) if d is not None and x > 0]
+    return (clock.today() - max(days)).days if days else None
+
+
+# ---------- sleep and screen time ----------
+
+@dataclass
+class DailyNumber:
+    """A number entered once a day. Entering it again for the same day replaces it."""
+    key: str
+    item_id: str  # what the Log's Item ID column holds; there's no Items row for these
+    name: str
+    domain: str
+    at_most: bool  # True: a limit (screen time); False: a goal (sleep)
+    goal_min: int
+    xp: int = 5
+
+    def met(self, minutes: int) -> bool:
+        return minutes <= self.goal_min if self.at_most else minutes >= self.goal_min
+
+    def entry(self, minutes: int) -> tuple[str, int]:
+        """Kind and XP for a log row. Going over a limit is just noticed, like any unideal item."""
+        if self.met(minutes):
+            return "Good", self.xp
+        return ("Unideal", 0) if self.at_most else ("Good", 0)
+
+    def as_item(self) -> Item:
+        return Item(id=self.item_id, name=self.name, domain=self.domain, kind="Good", period="Daily", target=0,
+                    xp=self.xp, priority="Normal", block="", tags=[], counters=[], active=True, notes="", row=10**6,
+                    measure="Time", unit="Minutes", pinned=False)
+
+
+def daily_numbers(settings: dict) -> list[DailyNumber]:
+    sleep = round(to_float(settings.get("sleep_goal_hours"), 7.5) * 60)
+    screen = round(to_float(settings.get("screen_time_limit_hours"), 2) * 60)
+    out = []
+    if to_bool(settings.get("track_sleep"), True):
+        out.append(DailyNumber("sleep", "SLEEP", "Sleep", "Physical", False, max(0, sleep)))
+    if to_bool(settings.get("track_screen_time"), True):
+        out.append(DailyNumber("screen", "SCREEN", "Screen time", "Mental", True, max(0, screen)))
+    return out
+
+
+def number_values(frame: pd.DataFrame, item_id: str) -> dict[dt.date, int]:
+    """Minutes per day for a daily number; the latest entry wins if there are several."""
+    f = frame[frame["id"] == item_id] if not frame.empty else frame
+    if f.empty:
+        return {}
+    latest = f.sort_values("row").groupby("day").tail(1)
+    return {d: int(s) // 60 for d, s in zip(latest["day"], latest["secs"])}
+
+
+def fmt_hm(minutes: int | float) -> str:
+    h, m = divmod(int(round(minutes)), 60)
+    return f"{h}h {m:02d}m" if h else f"{m}m"
+
+
+# ---------- timers ----------
+
+TIMER_MODES = ["Stopwatch", "Countdown", "Counter"]
+
+
+@dataclass
+class Timer:
+    id: str
+    item_id: str
+    label: str
+    mode: str
+    length: int  # countdown seconds
+    started: float | None  # Unix time it was last started; None while paused
+    elapsed: float  # seconds banked before `started`
+    reps: int
+    row: int
+
+    @property
+    def running(self) -> bool:
+        return self.started is not None
+
+    def seconds(self, now: float) -> int:
+        return int(self.elapsed + (max(0.0, now - self.started) if self.started is not None else 0))
+
+    def finished(self, now: float) -> bool:
+        return self.mode == "Countdown" and self.length > 0 and self.seconds(now) >= self.length
+
+    def logged_secs(self, now: float) -> int:
+        """What 'Log' records: a countdown never counts past its length."""
+        if self.mode == "Counter":
+            return 0
+        s = self.seconds(now)
+        return min(s, self.length) if self.mode == "Countdown" and self.length else s
+
+
+def parse_timers(df: pd.DataFrame) -> list[Timer]:
+    out = []
+    for r in df.to_dict("records"):
+        tid = str(r.get("ID", "")).strip()
+        if not tid:
+            continue
+        started = str(r.get("Started", "")).strip()
+        out.append(Timer(id=tid, item_id=str(r.get("Item ID", "")).strip(), label=str(r.get("Label", "")).strip(),
+                         mode=pick(TIMER_MODES, r.get("Mode"), "Stopwatch"), length=max(0, to_int(r.get("Length"), 0)),
+                         started=to_float(started) if started else None,
+                         elapsed=max(0.0, to_float(r.get("Elapsed"), 0.0)), reps=max(0, to_int(r.get("Reps"), 0)),
+                         row=to_int(r.get("_row"), 0)))
+    return out
+
+
+# ---------- character stats ----------
+
+STATS = ["Strength", "Endurance", "Mobility", "Skill", "Mind", "Spirit"]
+# What feeds each stat: item names, umbrella names, domains or tags, like an Action's Picks from.
+STAT_SOURCES = {
+    "Strength": "Hypertrophy, Isometrics, Calisthenics skill practice, HC workout",
+    "Endurance": "Endurance, Plyos / sprints / speed work, 10k steps, Outside walk",
+    "Mobility": "Mobility, Hands & ankles work",
+    "Skill": "Martial Arts, Calisthenics skill practice",
+    "Mind": "Mental",
+    "Spirit": "Spiritual",
+}
+STAT_BLURB = {
+    "Strength": "Hypertrophy and holds", "Endurance": "Cardio, walks and speed work",
+    "Mobility": "Mobility and joint work", "Skill": "Martial arts and calisthenics skills",
+    "Mind": "Everything in the Mental domain", "Spirit": "Everything in the Spiritual domain",
+}
+
+
+def stat_sources(settings: dict) -> dict[str, str]:
+    """Settings keys like stat_strength override the defaults."""
+    return {s: str(settings.get(f"stat_{s.lower()}") or STAT_SOURCES[s]) for s in STATS}
+
+
+def stat_level(points: int) -> tuple[int, int, int]:
+    """Level, points into it, points the level spans. Level L starts at 25·L·(L−1): 0, 50, 150, 300, 500…"""
+    level = 1
+    while 25 * (level + 1) * level <= points:
+        level += 1
+    start = 25 * level * (level - 1)
+    return level, points - start, 50 * level
+
+
+@dataclass
+class Stat:
+    name: str
+    points: int
+    week: int
+    level: int
+    into: int
+    span: int
+
+
+def stats(items: list[Item], log_df: pd.DataFrame, clock: Clock, settings: dict) -> list[Stat]:
+    """Each stat's points are the XP of the logs that feed it. One log can feed several stats."""
+    by_id = {it.id: it for it in items} | {n.item_id: n.as_item() for n in daily_numbers(settings)}
+    sources = {s: split_list(v) for s, v in stat_sources(settings).items()}
+    feeds = {iid: [s for s, toks in sources.items() if any(token_matches(it, t) for t in toks)]
+             for iid, it in by_id.items()}
+    pts, week = Counter(), Counter()
+    if not log_df.empty:
+        week0 = clock.week_start(clock.today())
+        for iid, x, d in zip(log_df["Item ID"].map(lambda v: str(v).strip()),
+                             log_df["XP"].map(lambda v: max(0, to_int(v, 0))), log_days(log_df, clock)):
+            for s in feeds.get(iid, []):
+                pts[s] += x
+                if d is not None and d >= week0:
+                    week[s] += x
+    return [Stat(s, pts[s], week[s], *stat_level(pts[s])) for s in STATS]
+
+
+# ---------- avatar and pet ----------
+
+BELTS = [(1, "White", "#f4f4f2"), (3, "Yellow", "#f2c53d"), (6, "Orange", "#ee8a2c"), (10, "Green", "#3a9b4b"),
+         (15, "Blue", "#2f6fd0"), (21, "Purple", "#7b4fc4"), (28, "Brown", "#7a4b2a"), (36, "Black", "#1c1c1c")]
+TITLES = ["Beginner", "Learner", "Apprentice", "Practitioner", "Adept", "Expert", "Master", "Grandmaster"]
+
+
+def belt(level: int) -> tuple[str, str, str, int | None]:
+    """Belt name, colour, title, and the level the next belt comes at."""
+    i = max(n for n, (lv, *_) in enumerate(BELTS) if level >= lv)
+    nxt = BELTS[i + 1][0] if i + 1 < len(BELTS) else None
+    return BELTS[i][1], BELTS[i][2], TITLES[i], nxt
+
+
+PET_STAGES = [(0, "Egg"), (100, "Hatchling"), (500, "Young"), (1500, "Grown"), (4000, "Elder")]
+
+
+@dataclass
+class Pet:
+    name: str
+    stage: str
+    stage_index: int
+    next_at: int | None  # total XP the next stage comes at
+    mood: str  # Happy, Content, Sleepy, Hibernating
+    line: str
+
+
+def pet_state(name: str, total_xp: int, days_since: int | None) -> Pet:
+    """Grows with lifetime XP. Mood follows how recently you logged. It never gets sick and never leaves."""
+    i = max(n for n, (xp, _) in enumerate(PET_STAGES) if total_xp >= xp)
+    stage = PET_STAGES[i][1]
+    nxt = PET_STAGES[i + 1][0] if i + 1 < len(PET_STAGES) else None
+    if days_since == 0:
+        mood, line = "Happy", f"{name} is bouncing around. You showed up today."
+    elif days_since == 1:
+        mood, line = "Content", f"{name} is curled up nearby, waiting for today's first log."
+    elif days_since is not None and days_since <= 3:
+        mood, line = "Sleepy", f"{name} is napping. One log wakes it up."
+    else:
+        mood, line = "Hibernating", f"{name} is hibernating, safe and warm. It wakes the moment you log something."
+    if stage == "Egg":
+        line = f"An egg, warm to the touch. It hatches at {PET_STAGES[1][0]} XP." + (
+            " It wiggled when you logged today." if days_since == 0 else "")
+    return Pet(name, stage, i, nxt, mood, line)
+
+
+# ---------- standards ----------
+
+TIERS = ["Needs work", "Fair", "Good", "Very good", "Excellent"]
+AGE_BANDS = [30, 40, 50, 60]  # under 30, 30s, 40s, 50s, 60+
+
+
+@dataclass
+class Standard:
+    name: str
+    names: tuple[str, ...]  # item names it reads, squashed to letters (see _squash)
+    metric: str  # "reps" or "secs"
+    cuts: dict  # sex -> list of 4 lower bounds (Fair, Good, Very good, Excellent), or per age band
+    source: str
+
+
+def _squash(s: str) -> str:
+    return re.sub(r"[^a-z]", "", s.lower())
+
+
+# Rough reference points, not test results: one set in your log isn't a supervised test.
+STANDARDS = [
+    Standard("Push-ups", ("pushups", "pushup"), "reps",
+             {"Male": [[17, 22, 29, 36], [12, 17, 22, 30], [10, 13, 17, 25], [7, 10, 13, 21], [5, 8, 11, 18]],
+              "Female": [[10, 15, 21, 30], [8, 13, 20, 27], [5, 11, 15, 24], [2, 7, 11, 21], [2, 5, 12, 17]]},
+             "ACSM/CSEP push-up norms by age and sex (max in one set)"),
+    Standard("Pull-ups", ("pullups", "pullup"), "reps",
+             {"Male": [1, 5, 10, 15], "Female": [1, 2, 4, 8]}, "Common fitness benchmarks (max in one set)"),
+    Standard("Squats", ("squat", "squats", "airsquat", "bodyweightsquat"), "reps",
+             {"Male": [20, 30, 40, 50], "Female": [15, 25, 35, 45]}, "Common bodyweight benchmarks (max in one set)"),
+    Standard("Plank", ("plank",), "secs", {"Any": [30, 60, 120, 180]}, "Common plank-hold benchmarks"),
+    Standard("Dead hang", ("deadhang",), "secs",
+             {"Male": [30, 60, 90, 120], "Female": [15, 30, 60, 90]}, "Common grip-strength benchmarks"),
+    Standard("Wall-sit", ("wallsit", "wallsitheellifted"), "secs",
+             {"Male": [25, 50, 75, 100], "Female": [20, 35, 45, 60]}, "Wall-sit test norms (heel lifted is harder)"),
+]
+
+
+def _cuts_for(std: Standard, sex: str, age: int) -> list[int]:
+    def one(s: str) -> list[int]:
+        c = std.cuts.get(s) or std.cuts.get("Any")
+        if c and isinstance(c[0], list):
+            c = c[sum(age >= a for a in AGE_BANDS)] if age else c[0]
+        return c
+    if sex in std.cuts or "Any" in std.cuts:
+        return one(sex if sex in std.cuts else "Any")
+    m, f = one("Male"), one("Female")  # sex not set: halfway between
+    return [round((a + b) / 2) for a, b in zip(m, f)]
+
+
+@dataclass
+class Comparison:
+    name: str
+    best: int | None
+    metric: str
+    tier: str | None
+    cuts: list[int]
+    source: str
+
+
+def compare_standards(items: list[Item], frame: pd.DataFrame, sex: str, age: int) -> list[Comparison]:
+    """Your best single log for each standard's exercise, against the reference tiers."""
+    out = []
+    for std in STANDARDS:
+        ids = {it.id for it in items if not it.group and _squash(it.name) in std.names}
+        f = frame[frame["id"].isin(ids)] if ids and not frame.empty else frame.iloc[0:0]
+        best = int(f[std.metric].max()) if not f.empty and f[std.metric].max() > 0 else None
+        cuts = _cuts_for(std, sex, age)
+        tier = TIERS[sum(best >= c for c in cuts)] if best is not None else None
+        out.append(Comparison(std.name, best, std.metric, tier, cuts, std.source))
+    return out
+
+
+def active_minutes(items: list[Item], frame: pd.DataFrame, start: dt.date, end: dt.date) -> int:
+    """Minutes logged on Physical items (not sleep) between start and end."""
+    ids = {it.id for it in items if it.domain == "Physical" and not it.group}
+    f = frame[frame["id"].isin(ids) & (frame["day"] >= start) & (frame["day"] <= end)] if not frame.empty else frame
+    return int(f["secs"].sum()) // 60 if not f.empty else 0
+
+
+def stat_days(items: list[Item], frame: pd.DataFrame, settings: dict, stat: str, start: dt.date, end: dt.date) -> int:
+    """Distinct days between start and end with a log feeding `stat`."""
+    toks = split_list(stat_sources(settings)[stat])
+    ids = {it.id for it in items if any(token_matches(it, t) for t in toks)}
+    f = frame[frame["id"].isin(ids) & (frame["day"] >= start) & (frame["day"] <= end)] if not frame.empty else frame
+    return int(f["day"].nunique()) if not f.empty else 0

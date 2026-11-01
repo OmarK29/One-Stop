@@ -1,12 +1,16 @@
-"""Today: priorities first, then pinned umbrellas, then pinned items grouped by block of the day.
-Weekly items and 'noticed' items at the end. Everything else is one tap away in Browse all."""
+"""Today: running timers, priorities, sleep and screen time, pinned umbrellas, then pinned items grouped by
+block of the day. Weekly items and 'noticed' items at the end. Settings → Display picks which sections show.
+Everything else is one tap away in Browse all."""
 from __future__ import annotations
+
+import datetime as dt
 
 import streamlit as st
 
 import logic
 from views import log as log_view
-from views.common import Ctx, log_item, refresh_button
+from views import me, timers
+from views.common import Ctx, dark, log_item, refresh_button, set_daily_number
 
 SHOW_PRIORITIES = 5
 
@@ -20,9 +24,11 @@ def page(ctx: Ctx) -> None:
     xp = logic.xp_summary(log, ctx.clock, ctx.per_level)
     today = ctx.clock.today()
 
-    domains = st.pills("Domain", logic.DOMAINS, selection_mode="multi", key="d", bind="query-params",
-                       label_visibility="collapsed")
-    hide_done = st.toggle("Hide done", key="hide", bind="query-params")
+    show = set(ctx.today_sections())
+    with st.container(horizontal=True, vertical_alignment="center"):
+        domains = st.pills("Domain", logic.DOMAINS, selection_mode="multi", key="d", bind="query-params",
+                           label_visibility="collapsed")
+        hide_done = st.toggle("Hide done", key="hide", bind="query-params")
 
     def shown(it: logic.Item) -> bool:
         return it.active and (not domains or it.domain in domains)
@@ -37,12 +43,20 @@ def page(ctx: Ctx) -> None:
                 f"Floor <b>{floor_done}/{len(floor)}</b></div>", unsafe_allow_html=True)
     if floor and floor_done == len(floor):
         st.success("Floor's done. The day counts.", icon=":material/verified:")
+    if "Pet" in show:
+        _pet_line(ctx, log, xp.total)
+    if "Timers" in show:
+        timers.strip(ctx)
 
-    _priorities(ctx, items, counts)
-    _umbrellas(ctx, h, [it for it in items if it.group and it.pinned], counts, frame, hide_done)
+    if "Priorities" in show:
+        _priorities(ctx, items, counts)
+    if "Sleep & screen time" in show:
+        _numbers(ctx, frame)
+    if "Skills" in show:
+        _umbrellas(ctx, h, [it for it in items if it.group and it.pinned], counts, frame, hide_done)
 
     # Pinned daily items, grouped by block in sheet order
-    pinned = [it for it in good if it.pinned]
+    pinned = [it for it in good if it.pinned] if "Pinned" in show else []
     blocks: dict[str, list[logic.Item]] = {}
     for it in pinned:
         if it.period == "Daily":
@@ -56,7 +70,7 @@ def page(ctx: Ctx) -> None:
             for it in visible:
                 _item_button(ctx, it, counts, "d")
 
-    weekly = [it for it in pinned if it.period == "Weekly"]
+    weekly = [it for it in good if it.pinned and it.period == "Weekly"] if "This week" in show else []
     visible = [it for it in weekly if not (hide_done and logic.is_done(it, counts))]
     if visible:
         done = sum(logic.is_done(it, counts) for it in weekly)
@@ -64,7 +78,7 @@ def page(ctx: Ctx) -> None:
             for it in visible:
                 _item_button(ctx, it, counts, "w")
 
-    unideal = [it for it in items if not it.good and not it.group]
+    unideal = [it for it in items if not it.good and not it.group] if "Noticed" in show else []
     if unideal:
         with st.expander("Noticed (no XP lost)", expanded=False):
             st.caption("Logging these just helps the guide point you at what counters them.")
@@ -79,6 +93,62 @@ def page(ctx: Ctx) -> None:
         log_view.open_dialog(ctx, "Log something")
     _undo(ctx, log, today)
     refresh_button(ctx, "today_refresh")
+
+
+def _pet_line(ctx: Ctx, log, total_xp: int) -> None:
+    pet = logic.pet_state(str(ctx.settings.get("pet_name") or "Pip").strip() or "Pip", total_xp,
+                          logic.days_since_good_log(log, ctx.clock))
+    row = st.container(horizontal=True, wrap=False, vertical_alignment="center")
+    with row.container(width=48):
+        me.drawing(me.pet_svg(pet, dark()), width=44, key="today_pet", row=True)
+    row.caption(pet.line)
+
+
+def _numbers(ctx: Ctx, frame) -> None:
+    """Sleep and screen time: one number a day each. Saving again for the same day replaces it."""
+    nums = logic.daily_numbers(ctx.settings)
+    if not nums:
+        return
+    today = ctx.clock.today()
+    hour = ctx.clock.now().hour
+    summary, missing = [], False
+    for n in nums:
+        v = logic.number_values(frame, n.item_id)
+        day = today if n.key == "sleep" or hour >= 20 else today - dt.timedelta(days=1)
+        if day in v:
+            summary.append(f"{n.name} {logic.fmt_hm(v[day])}" + (" ✓" if n.met(v[day]) else ""))
+        else:
+            summary.append(f"{n.name} —")
+            missing = True
+    with st.expander(" · ".join(summary), icon=":material/bedtime:", expanded=missing):
+        for n in nums:
+            _number_form(ctx, n, frame, today, hour)
+
+
+def _number_form(ctx: Ctx, n: logic.DailyNumber, frame, today: dt.date, hour: int) -> None:
+    v = logic.number_values(frame, n.item_id)
+    with st.form(f"num_{n.key}", border=False):
+        if n.key == "sleep":
+            day = today
+            label = f"Sleep last night · goal {logic.fmt_hm(n.goal_min)}"
+        else:
+            opts = ["Yesterday", "Today so far"]
+            when = st.segmented_control("Day", opts, default=opts[1] if hour >= 20 else opts[0],
+                                        key=f"num_day_{n.key}", label_visibility="collapsed") or opts[0]
+            day = today if when == opts[1] else today - dt.timedelta(days=1)
+            label = f"Screen time · limit {logic.fmt_hm(n.goal_min)} · from Settings → Screen Time"
+        st.caption(label)
+        c1 = c2 = c3 = st.container(horizontal=True, wrap=False, vertical_alignment="bottom")
+        hrs = c1.number_input("Hours", 0, 24, value=None, placeholder="h", key=f"num_h_{n.key}")
+        mins = c2.number_input("Minutes", 0, 59, value=None, step=5, placeholder="m", key=f"num_m_{n.key}")
+        if c3.form_submit_button("Save"):
+            total = int(hrs or 0) * 60 + int(mins or 0)
+            if total or hrs == 0 or mins == 0:
+                set_daily_number(ctx, n, day, total)
+                st.rerun()
+    recent = [f"{d.strftime('%a')} {logic.fmt_hm(m)}" for d, m in sorted(v.items(), reverse=True)[:4]]
+    if recent:
+        st.caption("Recent: " + " · ".join(recent))
 
 
 def _priorities(ctx: Ctx, items: list[logic.Item], counts: dict) -> None:

@@ -6,7 +6,7 @@ import datetime as dt
 import streamlit as st
 
 import logic
-from views.common import Ctx, log_item
+from views.common import Ctx, log_item, start_timer
 
 OTHER = "__other__"
 
@@ -181,7 +181,12 @@ def _form(ctx: Ctx, h: logic.Hierarchy, it: logic.Item, frame, day: dt.date, key
 
     reps = secs = 0
     if it.measure in ("Reps", "Both"):
-        reps = st.number_input("Reps", 0, 100000, value=None, step=1, placeholder="0", key=f"{key}_reps_{it.id}") or 0
+        reps_key = f"{key}_reps_{it.id}"
+        reps = st.number_input("Reps", 0, 100000, value=None, step=1, placeholder="0", key=reps_key) or 0
+        # Tap to count while you go
+        row = st.container(horizontal=True, wrap=False)
+        for by in (-1, 5, 10, 1):
+            row.button(f"{by:+d}", key=f"{key}_c{by}_{it.id}", width="stretch", on_click=_count, args=(reps_key, by))
     if it.measure in ("Time", "Both"):
         c1, c2 = st.columns(2)
         mins = c1.number_input("Minutes", 0, 1440, value=None, step=1, placeholder="0", key=f"{key}_min_{it.id}") or 0
@@ -199,9 +204,20 @@ def _form(ctx: Ctx, h: logic.Hierarchy, it: logic.Item, frame, day: dt.date, key
             log_item(ctx, it, "Log", reps=last["reps"], secs=last["secs"], variant=last["variant"], day=day)
             _rerun(in_dialog)
 
-    c1, c2 = st.columns(2)
+    c1 = c2 = c3 = st.container(horizontal=True)
     if can_change and c1.button("Change skill", icon=":material/swap_horiz:", type="tertiary", key=f"{key}_change"):
         ss[f"{key}_sel"], ss[f"{key}_choosing"] = None, True
         _rerun(in_dialog)
-    if in_dialog and c2.button("Done", icon=":material/check:", type="tertiary", key=f"{key}_done"):
+    if it.measure != "Check" and day == today and c2.button(
+            "Timer" if it.measure != "Reps" else "Counter", icon=":material/timer:", type="tertiary",
+            key=f"{key}_timer", help="Start a timer for this on the Timers page"):
+        start_timer(ctx, it, "Counter" if it.measure == "Reps" else "Stopwatch")
+        if "timers" in ctx.pages:
+            st.switch_page(ctx.pages["timers"])
         st.rerun()
+    if in_dialog and c3.button("Done", icon=":material/check:", type="tertiary", key=f"{key}_done"):
+        st.rerun()
+
+
+def _count(key: str, by: int) -> None:
+    st.session_state[key] = max(0, (st.session_state.get(key) or 0) + by)

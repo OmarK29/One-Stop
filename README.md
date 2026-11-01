@@ -9,11 +9,13 @@ The same code runs on your Mac and, hosted free, on your phone. Both read and wr
 | Page | What it does |
 |---|---|
 | **Guide me** | One question at a time, then **one** action. That action is the most important item you haven't done yet, chosen from your answers. The buttons are **Did it**, **Another option** and **Not now**, and every walk is saved to *Checkins*. |
-| **Today** | **Priorities** first (Floor and High items not done, weekly items behind pace), then your pinned umbrellas, then pinned items by block of the day. Filter by domain or hide what's done. *Noticed* holds the unideal items. **Browse all** finds anything else. Undo removes your last tap. |
-| **Log** | Pick a skill (recent and pinned first; **Other…** to search or drill down umbrella → skill → rung), enter reps and/or time, pick a variant, then **Log**. **Same again** repeats your last set in one tap. |
+| **Today** | Your pet and any running timers at the top, then **Priorities** (Floor and High items not done, weekly items behind pace), **sleep and screen time** for the day, your pinned umbrellas, then pinned items by block of the day. Filter by domain or hide what's done. *Noticed* holds the unideal items. **Browse all** finds anything else. Undo removes your last tap. Settings → Display picks which sections show. |
+| **Log** | Pick a skill (recent and pinned first; **Other…** to search or drill down umbrella → skill → rung), enter reps and/or time, pick a variant, then **Log**. Tap **+1 / +5 / +10** to count reps as you go. **Same again** repeats your last set in one tap; **Timer** or **Counter** starts one for this skill. |
+| **Timers** | As many stopwatches, countdowns and rep counters as you like, at once. Each can belong to a skill; **Log** records its time and reps. Countdowns beep (and buzz on Android) at zero. Timers live in the sheet, so they keep running with the app closed and show on every device. |
+| **Me** | Your character (the belt colour follows your level), six stats (Strength, Endurance, Mobility, Skill, Mind, Spirit) built from the XP of what you log, your pet, and **How you compare**: your best set against common fitness norms, weekly active minutes against the WHO guideline, and sleep, screen time and water against typical figures. Stats only go up, and the pet never gets sick or leaves. It just naps when you've been away. |
 | **Trackers** | Your printed weekly grids: days down the side, your columns across, a weekly total at the bottom. Tap a cell to log for that day. **Print week** gives you the paper version, filled in or blank. |
-| **Progress** | Lifetime XP (always the biggest number), your level, XP by day for each domain, weekly goals, your umbrellas with totals at every level, weekly volume for any skill, how far up each progression you are, what you noticed this week, and recent check-ins. |
-| **Edit** | Edit what you track, the Guide me tree (with a map and a tree check), and settings. |
+| **Progress** | Lifetime XP (always the biggest number), your level, XP by day for each domain, weekly goals, 14 days of sleep and screen time against your goal and limit, your umbrellas with totals at every level, weekly volume for any skill, how far up each progression you are, what you noticed this week, and recent check-ins. |
+| **Edit** | **Skills** adds or changes one skill or umbrella at a time: its umbrellas, what you enter when logging, its **variants** (same level, different ways) and its **progression** (harder levels, easiest first). Renaming follows the name into Parents, trackers and Guide me. **All items (table)** edits everything at once. Also trackers, the Guide me tree (with a map and a tree check), and settings. |
 | **Setup** | Mac only. Connect the sheet, get the phone setup block, or quit. |
 
 ## The sheet (you can edit it directly)
@@ -32,14 +34,17 @@ The same code runs on your Mac and, hosted free, on your phone. Both read and wr
 - **Trackers**: one row per column of a weekly grid. **Maps to** is one or more items or umbrellas; **Show** is Auto (reps and/or time, else a tick), Reps, Time or Count.
 - **Questions**: one row per choice. Rows that share a **Node** make one question, and the walk starts at `start`. **Next** is another Node or an Action.
 - **Actions**: **Picks from** is an ordered list of tags, domains, priorities, item names or umbrella names. An umbrella suggests the least-done skill under it this week, at your current rung. Join two with `+` to require both, e.g. `Spiritual+low-energy`. Items already done this period are skipped. **Fallback** shows when nothing is left.
-- **Log**, **Checkins**: written by the app. Log has **Reps**, **Seconds** and **Variant** too.
-- **Settings**: time zone, the hour the day starts (late-night logs count for the day before), the week's start day, and XP per level.
+- **Log**, **Checkins**: written by the app. Log has **Reps**, **Seconds** and **Variant** too. Sleep and screen time are Log rows with Item ID `SLEEP` and `SCREEN` (one per day; entering it again replaces it). Screen time over your limit is logged as unideal: noticed, never a penalty.
+- **Timers**: running timers, written by the app.
+- **Settings**: time zone, the hour the day starts (late-night logs count for the day before), the week's start day, XP per level, display options (`display_*`), sleep goal and screen-time limit, your age and sex for the fitness norms, your character's look, and your pet's name. All of these are on Edit → Settings. Add a row such as `stat_strength` = `Hypertrophy, Isometrics` to change what feeds a stat.
+
+**Dark mode** follows your phone or Mac. To choose yourself, open the ⋮ menu (top right) → Settings → Choose app theme.
 
 Rows you type into Items without an ID get one automatically. Item names can't contain commas, since Parents and Maps to are comma-separated; Edit flags this, along with unknown parents and loops.
 
 Filters (domain, hide done, which tracker) live in the page link, e.g. `…/trackers?t=Hypertrophy`, so you can add a Home Screen icon that opens straight to one view.
 
-Sheets made before umbrellas existed are upgraded once, on first open: the new columns are added, the starter skills and umbrellas are appended (only names you don't already have), and Brush teeth, Shower and a few others are filed under them where Parents is blank.
+New tabs (like Timers) are added automatically the first time new code opens your sheet. Sheets made before umbrellas existed are upgraded once, on first open: the new columns are added, the starter skills and umbrellas are appended (only names you don't already have), and Brush teeth, Shower and a few others are filed under them where Parents is blank.
 
 ## Setup on your Mac (once)
 
@@ -71,10 +76,11 @@ Optional extra lock: add `app_password = "something"` to the Secrets.
 | File | What it is |
 |---|---|
 | `app.py` | Startup, navigation, local vs. hosted mode |
-| `logic.py` | XP, done-status, umbrellas and totals, priorities, trackers, the tree walker and recommender (no Streamlit, easy to test) |
+| `logic.py` | XP, done-status, umbrellas and totals, priorities, trackers, timers, sleep and screen time, stats, the pet, fitness standards, the tree walker and recommender (no Streamlit, easy to test) |
 | `store.py` | Google Sheets reads and writes, setup errors |
 | `seed.py` | Starting items, skills, trackers, questions, actions and settings |
 | `views/` | One file per page; `log.py` is also the dialog Today and Trackers open |
+| `.streamlit/config.toml` | The light and dark themes |
 | `launch.sh`, `One Stop.app` | Mac launcher: finds Python, `git pull`, installs packages when they change, opens the browser |
 
 Settings and your key live in `~/.one-stop/`. Logs are in `~/.one-stop/launcher.log` and `~/.one-stop/app.log`.

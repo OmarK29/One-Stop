@@ -1,6 +1,8 @@
 """Progress: lifetime XP first and largest. No streaks anywhere."""
 from __future__ import annotations
 
+import datetime as dt
+
 import altair as alt
 import pandas as pd
 import streamlit as st
@@ -63,6 +65,7 @@ def page(ctx: Ctx) -> None:
         n = counts.get(it.id, 0)
         st.progress(min(1.0, n / it.target), text=f"{it.name} · {logic.fmt_amount(n, it.unit)}/{it.target}")
 
+    _numbers(ctx, log)
     _skills(ctx, items, log)
 
     noticed = week[week["Kind"] == "Unideal"] if not week.empty else week
@@ -84,6 +87,39 @@ def page(ctx: Ctx) -> None:
         st.dataframe(recent[["When", "Recommended", "Outcome", "Path"]], hide_index=True, width="stretch")
 
     refresh_button(ctx, "progress_refresh")
+
+
+def _numbers(ctx: Ctx, log) -> None:
+    """Sleep and screen time for the last 14 days, one chart each, with your goal or limit as a line."""
+    nums = logic.daily_numbers(ctx.settings)
+    frame = logic.log_frame(log, ctx.clock)
+    values = {n.key: logic.number_values(frame, n.item_id) for n in nums}
+    if not any(values.values()):
+        return
+    today = ctx.clock.today()
+    days = [today - dt.timedelta(days=i) for i in reversed(range(14))]
+    st.markdown("#### Sleep and screen time")
+    for n in nums:
+        v = values[n.key]
+        if not v:
+            continue
+        df = pd.DataFrame({"Day": [pd.Timestamp(d) for d in days], "Hours": [v.get(d, 0) / 60 for d in days],
+                           "Entered": [d in v for d in days]})
+        df = df[df["Entered"]]
+        got = list(df["Hours"])
+        goal = n.goal_min / 60
+        word = "limit" if n.at_most else "goal"
+        st.markdown(f"**{n.name}** · {sum(got) / len(got):.1f}h a day on average · {word} {goal:g}h")
+        color = DOMAIN_COLORS["Mental"] if n.at_most else DOMAIN_COLORS["Physical"]
+        bars = (alt.Chart(df).mark_bar(cornerRadiusTopLeft=4, cornerRadiusTopRight=4, size=14, color=color)
+                .encode(x=alt.X("yearmonthdate(Day):T", title=None, axis=alt.Axis(format="%-m/%-d", grid=False),
+                                scale=alt.Scale(domain=[pd.Timestamp(days[0]).isoformat(),
+                                                        pd.Timestamp(days[-1]).isoformat()])),
+                        y=alt.Y("Hours:Q", title="Hours", axis=alt.Axis(tickCount=4)),
+                        tooltip=[alt.Tooltip("yearmonthdate(Day):T", title="Day", format="%a %b %-d"),
+                                 alt.Tooltip("Hours:Q", format=".1f")]))
+        rule = alt.Chart(pd.DataFrame({"y": [goal]})).mark_rule(strokeDash=[4, 4], opacity=.6).encode(y="y:Q")
+        st.altair_chart((bars + rule).properties(height=160), width="stretch")
 
 
 def _walk(h: logic.Hierarchy, gid: str, depth: int = 0, trail: frozenset = frozenset()):

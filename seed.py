@@ -185,6 +185,9 @@ SETTINGS = [
     ["day_starts_at_hour", 3],
     ["week_starts_on", "Monday"],
     ["xp_per_level", 250],
+    ["sleep_goal_hours", 7.5],
+    ["screen_time_limit_hours", 2],
+    ["pet_name", "Pip"],
 ]
 
 # Printed-style weekly grids. Maps to = skills or umbrellas (comma-separated); Show = Auto, Reps, Time or Count.
@@ -210,6 +213,10 @@ _TRACKERS = {
 }
 TRACKERS = [[t, col, maps, "Auto"] for t, cols in _TRACKERS.items() for col, maps in cols]
 
+# Running timers and counters, so they survive a closed tab and show on every device.
+# Started = when it was last started (Unix seconds), blank while paused; Elapsed = seconds banked before that.
+TIMERS_HEADER = ["ID", "Item ID", "Label", "Mode", "Length", "Started", "Elapsed", "Reps", "Created"]
+
 TABS = {
     "Items": (ITEMS_HEADER, ITEMS),
     "Trackers": (TRACKERS_HEADER, TRACKERS),
@@ -218,4 +225,5 @@ TABS = {
     "Actions": (ACTIONS_HEADER, ACTIONS),
     "Checkins": (CHECKINS_HEADER, []),
     "Settings": (SETTINGS_HEADER, SETTINGS),
+    "Timers": (TIMERS_HEADER, []),
 }

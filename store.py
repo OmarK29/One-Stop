@@ -1,4 +1,4 @@
-"""Google Sheets storage. One spreadsheet, seven tabs. Reads are cached per session and
+"""Google Sheets storage. One spreadsheet, eight tabs. Reads are cached per session and
 cleared on every write, so the app stays fast without going stale."""
 from __future__ import annotations
 
@@ -137,6 +137,7 @@ class Store:
         self.ss = spreadsheet
         self.cache = cache if cache is not None else {}
         self._ws = {}
+        self._headers = {}  # tab -> header row, for update_row
 
     # -- setup --
     def ensure_tabs(self) -> list[str]:
@@ -314,7 +315,20 @@ class Store:
         ws = self.ws(title)
         ws.clear()
         ws.update(range_name="A1", values=[header] + rows, value_input_option="RAW")
+        self._headers.pop(title, None)
         self._style_header(ws, len(header))
+        self.cache.pop(title, None)
+
+    def update_row(self, title: str, sheet_row: int, values: dict) -> None:
+        """Set some cells of one row, by column name. Columns the sheet doesn't have are skipped."""
+        ws = self.ws(title)
+        if title not in self._headers:
+            self._headers[title] = ws.row_values(1)
+        header = self._headers[title]
+        updates = [{"range": f"{_col_letter(header.index(k) + 1)}{int(sheet_row)}", "values": [[_cell(v)]]}
+                   for k, v in values.items() if k in header]
+        if updates:
+            ws.batch_update(updates, value_input_option="RAW")
         self.cache.pop(title, None)
 
     def delete_row(self, title: str, sheet_row: int) -> None:

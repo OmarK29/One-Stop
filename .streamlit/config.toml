@@ -1,5 +1,16 @@
-[theme]
+# Light and dark themes. The app follows your phone or Mac's setting; to pick one yourself,
+# open the ⋮ menu (top right) → Settings → Choose app theme.
+[theme.light]
 primaryColor = "#1F5C50"
+backgroundColor = "#FFFFFF"
+secondaryBackgroundColor = "#F1F5F4"
+textColor = "#16211F"
+
+[theme.dark]
+primaryColor = "#4FB39E"
+backgroundColor = "#0E1412"
+secondaryBackgroundColor = "#1A2422"
+textColor = "#E6EEEC"
 
 [client]
 toolbarMode = "minimal"

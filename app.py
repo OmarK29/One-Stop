@@ -10,7 +10,7 @@ import streamlit as st
 
 import logic
 import store
-from views import edit, guide, log, progress, setup, today, trackers
+from views import edit, guide, log, me, progress, setup, timers, today, trackers
 from views.common import Ctx
 
 CSS = """
@@ -25,8 +25,22 @@ CSS = """
 [data-testid="stMainBlockContainer"] { padding-top: 3.2rem; padding-bottom: 3rem; }
 .stat-line { font-size: 1.05rem; margin: -.4rem 0 .8rem; }
 .stat-line b { font-size: 1.25rem; }
+.rep-count { font-size: 2.4rem; font-weight: 700; font-variant-numeric: tabular-nums; line-height: 1.1; }
+.rep-count span { font-size: 1rem; font-weight: 500; opacity: .6; }
+.me-name { font-size: 1.2rem; font-weight: 700; text-align: center; }
+.me-sub { text-align: center; opacity: .7; margin-bottom: .6rem; }
 </style>
 """
+# Settings → Display → Layout: Compact fits more on a phone screen.
+COMPACT_CSS = """
+<style>
+.stButton button { min-height: 2.3rem; padding-top: .2rem; padding-bottom: .2rem; }
+[data-testid="stMainBlockContainer"] { padding-top: 2.6rem; }
+[data-testid="stVerticalBlock"] { gap: .55rem; }
+[data-testid="stExpander"] details summary { padding-top: .45rem; padding-bottom: .45rem; }
+</style>
+"""
+LARGE_TEXT_CSS = "<style>html { font-size: 18px; }</style>"
 
 
 def _secrets() -> dict:
@@ -88,17 +102,36 @@ def main() -> None:
 
     settings = s.settings()
     ctx = Ctx(store=s, clock=logic.Clock.from_settings(settings), settings=settings, cloud=cloud)
-    pages = [
-        st.Page(lambda: guide.page(ctx), title="Guide me", icon=":material/explore:", url_path="guide", default=True),
-        st.Page(lambda: today.page(ctx), title="Today", icon=":material/checklist:", url_path="today"),
-        st.Page(lambda: log.page(ctx), title="Log", icon=":material/add_circle:", url_path="log"),
-        st.Page(lambda: trackers.page(ctx), title="Trackers", icon=":material/calendar_view_week:", url_path="trackers"),
-        st.Page(lambda: progress.page(ctx), title="Progress", icon=":material/insights:", url_path="progress"),
-        st.Page(lambda: edit.page(ctx), title="Edit", icon=":material/edit_note:", url_path="edit"),
+    if ctx.display("layout", "Comfortable") == "Compact":
+        st.markdown(COMPACT_CSS, unsafe_allow_html=True)
+    if ctx.display("text", "Normal") == "Large":
+        st.markdown(LARGE_TEXT_CSS, unsafe_allow_html=True)
+
+    start = ctx.display("start_page", "Guide me")
+    main_pages = [
+        ("Guide me", guide.page, ":material/explore:", "guide"),
+        ("Today", today.page, ":material/checklist:", "today"),
+        ("Log", log.page, ":material/add_circle:", "log"),
+        ("Timers", timers.page, ":material/timer:", "timers"),
+        ("Trackers", trackers.page, ":material/calendar_view_week:", "trackers"),
+        ("Me", me.page, ":material/person:", "me"),
     ]
+    more_pages = [
+        ("Progress", progress.page, ":material/insights:", "progress"),
+        ("Edit", edit.page, ":material/edit_note:", "edit"),
+    ]
+    if start not in [t for t, *_ in main_pages + more_pages]:
+        start = "Guide me"
+
+    def make(title, fn, icon, path):
+        ctx.pages[path] = st.Page(lambda: fn(ctx), title=title, icon=icon, url_path=path, default=title == start)
+        return ctx.pages[path]
+
+    nav = {"": [make(*p) for p in main_pages], "More": [make(*p) for p in more_pages]}
     if not cloud:
-        pages.append(st.Page(lambda: setup.page(True), title="Setup", icon=":material/settings:", url_path="setup"))
-    st.navigation(pages, position="top").run()
+        nav["More"].append(st.Page(lambda: setup.page(True), title="Setup", icon=":material/settings:",
+                                   url_path="setup"))
+    st.navigation(nav, position="top").run()
 
 
 if __name__ == "__main__":
