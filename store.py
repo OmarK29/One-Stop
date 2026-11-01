@@ -1,4 +1,4 @@
-"""Google Sheets storage. One spreadsheet, six tabs. Reads are cached per session and
+"""Google Sheets storage. One spreadsheet, seven tabs. Reads are cached per session and
 cleared on every write, so the app stays fast without going stale."""
 from __future__ import annotations
 
@@ -17,12 +17,18 @@ KEY_FILE = CONFIG_DIR / "service_account.json"
 CRM_KEY_FILE = Path.home() / ".simple-crm" / "service_account.json"
 CACHE_SECONDS = 90
 
-DROPDOWNS = {  # Items column -> allowed values, applied as sheet dropdowns
-    "Domain": ["Physical", "Mental", "Spiritual"],
-    "Kind": ["Good", "Unideal"],
-    "Period": ["Daily", "Weekly"],
-    "Priority": ["Floor", "High", "Normal", "Low"],
+DROPDOWNS = {  # tab -> column -> allowed values, applied as sheet dropdowns
+    "Items": {
+        "Domain": ["Physical", "Mental", "Spiritual"],
+        "Kind": ["Good", "Unideal", "Group"],
+        "Period": ["Daily", "Weekly"],
+        "Priority": ["Floor", "High", "Normal", "Low"],
+        "Measure": ["Check", "Reps", "Time", "Both"],
+        "Unit": ["Logs", "Reps", "Minutes"],
+    },
+    "Trackers": {"Show": ["Auto", "Reps", "Time", "Count"]},
 }
+CHECKBOXES = {"Items": ["Active", "Pinned"]}
 
 
 class SetupError(Exception):
@@ -136,6 +142,7 @@ class Store:
     def ensure_tabs(self) -> list[str]:
         """Create any missing tabs (with starting data) and add missing columns. Returns tabs created."""
         existing = {ws.title: ws for ws in self.ss.worksheets()}
+        upgrading = "Items" in existing and "Trackers" not in existing  # sheet made before skills existed
         created = []
         for title, (header, rows) in seed.TABS.items():
             ws = existing.get(title)
@@ -153,8 +160,12 @@ class Store:
                     self._style_header(ws, len(header))
                 elif missing:
                     new_header = current + missing
+                    if ws.col_count < len(new_header):
+                        ws.add_cols(len(new_header) - ws.col_count)
                     ws.update(range_name="A1", values=[new_header], value_input_option="RAW")
             self._ws[title] = ws
+            if title == "Items" and upgrading:
+                self._add_starter_skills()
         # Google gives new spreadsheets an empty "Sheet1"; remove it once our tabs exist.
         blank = existing.get("Sheet1")
         if blank is not None and created and not any(any(r) for r in blank.get_all_values()):
@@ -162,8 +173,8 @@ class Store:
                 self.ss.del_worksheet(blank)
             except Exception:
                 pass
-        if "Items" in created:
-            self._add_dropdowns()
+        for title in created + (["Items"] if upgrading else []):
+            self._add_dropdowns(title)
         self.cache.clear()
         return created
 
@@ -175,27 +186,61 @@ class Store:
         except Exception:
             pass
 
-    def _add_dropdowns(self) -> None:
+    def _add_dropdowns(self, title: str) -> None:
         try:
-            ws = self.ws("Items")
-            header = seed.ITEMS_HEADER
-            reqs = []
-            for col, values in DROPDOWNS.items():
+            ws = self.ws(title)
+            header = ws.row_values(1)  # the sheet's own order, which can differ from seed on older sheets
+
+            def rule(col: str, condition: dict) -> dict:
                 idx = header.index(col)
-                reqs.append({"setDataValidation": {
+                return {"setDataValidation": {
                     "range": {"sheetId": ws.id, "startRowIndex": 1, "endRowIndex": 1000,
                               "startColumnIndex": idx, "endColumnIndex": idx + 1},
-                    "rule": {"condition": {"type": "ONE_OF_LIST",
-                                           "values": [{"userEnteredValue": v} for v in values]},
-                             "strict": False, "showCustomUi": True}}})
-            idx = header.index("Active")
-            reqs.append({"setDataValidation": {
-                "range": {"sheetId": ws.id, "startRowIndex": 1, "endRowIndex": 1000,
-                          "startColumnIndex": idx, "endColumnIndex": idx + 1},
-                "rule": {"condition": {"type": "BOOLEAN"}}}})
-            self.ss.batch_update({"requests": reqs})
+                    "rule": condition}}
+
+            reqs = [rule(col, {"condition": {"type": "ONE_OF_LIST",
+                                             "values": [{"userEnteredValue": v} for v in values]},
+                               "strict": False, "showCustomUi": True})
+                    for col, values in DROPDOWNS.get(title, {}).items() if col in header]
+            reqs += [rule(col, {"condition": {"type": "BOOLEAN"}})
+                     for col in CHECKBOXES.get(title, []) if col in header]
+            if reqs:
+                self.ss.batch_update({"requests": reqs})
         except Exception:
             pass
+
+    def _add_starter_skills(self) -> None:
+        """Once, on a sheet made before skills existed: add the starter umbrellas and skills whose names
+        aren't there yet, file existing items under them where Parents is blank, and mark old rows Pinned."""
+        ws = self.ws("Items")
+        values = ws.get_all_values()
+        header = values[0]
+        rows = [(r + [""] * len(header))[:len(header)] for r in values[1:]]
+        col = {h: i for i, h in enumerate(header)}
+        names = {r[col["Item"]].strip().lower(): n for n, r in enumerate(rows, start=2) if r[col["Item"]].strip()}
+        parents = {k.lower(): v for k, v in seed.ITEM_PARENTS.items()}
+        updates = []
+        for n, r in enumerate(rows, start=2):
+            name = r[col["Item"]].strip().lower()
+            if not name:
+                continue
+            if name in parents and not r[col["Parents"]].strip():
+                updates.append({"range": f"{_col_letter(col['Parents'] + 1)}{n}", "values": [[parents[name]]]})
+            if not r[col["Pinned"]].strip():
+                updates.append({"range": f"{_col_letter(col['Pinned'] + 1)}{n}", "values": [[True]]})
+        used = {r[col["ID"]].strip() for r in rows}
+        nxt = max([int(m.group(1)) for i in used if (m := re.fullmatch(r"I(\d+)", i))], default=0) + 1
+        new = []
+        for skill in seed.SKILLS:
+            if skill[0].lower() in names:
+                continue
+            rec = dict(zip(seed.ITEMS_HEADER, seed.skill_row(f"I{nxt:03d}", skill)))
+            nxt += 1
+            new.append([_cell(rec.get(h, "")) for h in header])
+        if updates:
+            ws.batch_update(updates, value_input_option="RAW")
+        if new:
+            ws.append_rows(new, value_input_option="RAW", table_range="A1")
 
     def ws(self, title: str):
         if title not in self._ws:

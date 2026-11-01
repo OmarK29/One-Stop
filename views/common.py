@@ -28,12 +28,20 @@ class Ctx:
     def log(self):
         return self.store.read("Log")
 
+    def trackers(self) -> dict[str, list[logic.TrackerColumn]]:
+        return logic.parse_trackers(self.store.read("Trackers"))
 
-def log_item(ctx: Ctx, item: logic.Item, source: str, note: str = "") -> None:
-    ctx.store.append("Log", [ctx.clock.stamp(), ctx.clock.today().isoformat(), item.id, item.name,
-                             item.domain, item.kind, item.xp if item.good else 0, source, note])
+
+def log_item(ctx: Ctx, item: logic.Item, source: str, note: str = "", reps: int = 0, secs: int = 0,
+             variant: str = "", day=None) -> None:
+    """Append one log row. `day` lets a tracker cell log for an earlier day this week."""
+    day = day or ctx.clock.today()
+    ctx.store.append("Log", [ctx.clock.stamp(), day.isoformat(), item.id, item.name, item.domain, item.kind,
+                             item.xp if item.good else 0, source, note, reps or "", secs or "", variant])
+    amount = logic.fmt_totals(logic.Totals(1, reps or 0, secs or 0))
+    what = " · ".join(b for b in (item.name, variant, amount if amount != "✓" else "") if b)
     if item.good:
-        st.toast(f"+{item.xp} XP · {item.name}", icon="✅")
+        st.toast(f"+{item.xp} XP · {what}", icon="✅")
     else:
         st.toast(f"Noted: {item.name}. No XP lost.", icon="📝")
 
