@@ -10,7 +10,7 @@ import streamlit as st
 
 import logic
 import store
-from views import edit, guide, progress, setup, today
+from views import edit, guide, log, progress, setup, today, trackers
 from views.common import Ctx
 
 CSS = """
@@ -91,6 +91,8 @@ def main() -> None:
     pages = [
         st.Page(lambda: guide.page(ctx), title="Guide me", icon=":material/explore:", url_path="guide", default=True),
         st.Page(lambda: today.page(ctx), title="Today", icon=":material/checklist:", url_path="today"),
+        st.Page(lambda: log.page(ctx), title="Log", icon=":material/add_circle:", url_path="log"),
+        st.Page(lambda: trackers.page(ctx), title="Trackers", icon=":material/calendar_view_week:", url_path="trackers"),
         st.Page(lambda: progress.page(ctx), title="Progress", icon=":material/insights:", url_path="progress"),
         st.Page(lambda: edit.page(ctx), title="Edit", icon=":material/edit_note:", url_path="edit"),
     ]
