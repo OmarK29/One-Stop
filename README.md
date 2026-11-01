@@ -55,7 +55,7 @@ Sheets made before umbrellas existed are upgraded once, on first open: the new c
 4. Make a new, empty Google Sheet.
 5. Double-click **One Stop.app**. The first launch takes about a minute. The Setup page shows the key from your CRM if it finds one. Share the sheet with the address it shows, as an **Editor**, paste the sheet link, then click **Connect**. The tabs and starting data are created for you.
 
-Every time you open the app, it pulls the latest code from GitHub first.
+Every time you open the app, it pulls the latest code from GitHub first. If One Stop is already running from older code, it restarts so the new version loads cleanly.
 
 ## Phone (once)
 
