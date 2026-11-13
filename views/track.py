@@ -60,7 +60,7 @@ def _open_pending(ctx: Ctx, h: logic.Hierarchy) -> None:
     if day is not None and day > today:
         st.toast("That day hasn't come yet.")
     elif not [i for i in scope if i in h.items]:
-        st.toast("That doesn't map to any item yet. Fix it on Edit → Trackers.")
+        st.toast("That doesn't map to any item yet. Fix it on Manage → Trackers.")
     else:
         log_view.open_dialog(ctx, title, scope=scope, day=None if day == today else day)
 
@@ -70,7 +70,7 @@ def _open_pending(ctx: Ctx, h: logic.Hierarchy) -> None:
 def _trackers(ctx: Ctx, h, frame, period: str, start: dt.date, end: dt.date) -> None:
     trackers = ctx.trackers()
     if not trackers:
-        st.info("No trackers yet. Add rows on Edit → Trackers.")
+        st.info("No trackers yet. Add rows on Manage → Trackers.")
         return
     name = st.pills("Tracker", list(trackers), default=list(trackers)[0], required=True, key="t",
                     bind="query-params", label_visibility="collapsed")
@@ -201,7 +201,7 @@ def _tree(ctx: Ctx, h, frame, view: str, period: str, start: dt.date, end: dt.da
         roots += [it for it in h.items.values() if it.kind == "Goal" and it.active
                   and not any(h.items[p].kind == "Identity" for p in h.parents.get(it.id, []))]
         if not roots:
-            st.info("No identities or goals yet. Add them on Edit → Skills (➕ New identity or ➕ New goal).")
+            st.info("No identities or goals yet. Add them on Manage → Skills (➕ New identity or ➕ New goal).")
             return
     else:
         roots = [it for it in h.skill_roots() if it.active]

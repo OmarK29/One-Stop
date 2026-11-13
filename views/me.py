@@ -262,7 +262,7 @@ def _compare(ctx: Ctx, items: list[logic.Item], frame) -> None:
     sex = logic.pick(["Male", "Female"], ctx.settings.get("profile_sex"), "")
     age = logic.to_int(ctx.settings.get("profile_age"), 0)
     if not sex or not age:
-        st.caption("Add your age and sex in **Edit → Settings → Profile** to compare against the right group. "
+        st.caption("Add your age and sex in **Manage → Settings → Profile** to compare against the right group. "
                    "Until then, these use the middle of the ranges.")
     t1, t2, t3 = st.tabs(["Strength & holds", "Cardio", "Daily habits"])
     with t1:
@@ -341,7 +341,7 @@ def _habits(ctx: Ctx, items, frame) -> None:
                      "Reference": "≈8 glasses from drinks (NASEM total water 2.7–3.7 L incl. food)",
                      "How you're doing": "On track" if per_day >= 8 else "Below"})
     if not rows:
-        st.caption("Turn on sleep or screen time in Edit → Settings to compare them here.")
+        st.caption("Turn on sleep or screen time in Manage → Settings to compare them here.")
         return
     st.dataframe(pd.DataFrame(rows), hide_index=True, width="stretch")
     st.caption("Enter sleep and screen time on Today. Screen time comes from your phone's Settings → Screen Time. "

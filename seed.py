@@ -4,7 +4,7 @@ in the app (Edit page) or directly in the Google Sheet."""
 # New columns go at the end so existing sheets (and their dropdowns) keep their layout.
 ITEMS_HEADER = ["ID", "Item", "Domain", "Kind", "Period", "Target", "XP",
                 "Priority", "Block", "Tags", "Counters", "Active", "Notes",
-                "Parents", "Step", "Measure", "Variants", "Unit", "Pinned"]
+                "Parents", "Step", "Measure", "Variants", "Unit", "Pinned", "Inputs", "Rest"]
 
 # (Item, Domain, Kind, Period, Target, XP, Priority, Block, Tags, Counters, Notes)
 _ITEMS = [
@@ -178,10 +178,14 @@ def skill_row(item_id: str, row: tuple) -> list:
     name, parents, kind, measure, period, target, step, variants, pinned, domain, notes = row
     xp = 5 if kind == "Good" else 0
     return [item_id, name, domain, kind, period, target, xp, "", "", "", "", True, notes,
-            parents, step, measure, variants, "", pinned]
+            parents, step, measure, variants, "", pinned, MEASURE_INPUTS.get(measure, ""), ""]
 
 
-ITEMS = [[f"I{i:03d}", *row[:10], True, row[10], ITEM_PARENTS.get(row[0], ""), "", "", "", "", True]
+# What each old Measure means in the Inputs column. Sets = log set by set.
+MEASURE_INPUTS = {"Reps": "Sets, Reps", "Time": "Time", "Both": "Reps, Time"}
+
+
+ITEMS = [[f"I{i:03d}", *row[:10], True, row[10], ITEM_PARENTS.get(row[0], ""), "", "", "", "", True, "", ""]
          for i, row in enumerate(_ITEMS, start=1)]
 ITEMS += [skill_row(f"I{i:03d}", row) for i, row in enumerate(_SKILLS, start=len(ITEMS) + 1)]
 ITEMS += [skill_row(f"I{i:03d}", row) for i, row in enumerate(GOALS, start=len(ITEMS) + 1)]
@@ -223,7 +227,7 @@ ACTIONS = [
 ]
 
 LOG_HEADER = ["Timestamp", "Day", "Item ID", "Item", "Domain", "Kind", "XP", "Source", "Note",
-              "Reps", "Seconds", "Variant"]
+              "Reps", "Seconds", "Variant", "Weight", "Distance", "Effort", "Set", "Session"]
 CHECKINS_HEADER = ["Timestamp", "Day", "Path", "Recommended", "Outcome"]
 SETTINGS_HEADER = ["Key", "Value"]
 SETTINGS = [
@@ -235,7 +239,10 @@ SETTINGS = [
     ["screen_time_limit_hours", 2],
     ["pet_name", "Pip"],
     ["ladder_minutes", 5],
-    ["goals_added", True],  # a sheet without this gets the draft identities and goals once
+    ["goals_added", True],
+    ["weight_unit", "lb"],
+    ["distance_unit", "mi"],
+    ["rest_seconds", 90],  # a sheet without this gets the draft identities and goals once
 ]
 
 # Printed-style weekly grids. Maps to = skills or umbrellas (comma-separated); Show = Auto, Reps, Time or Count.
@@ -281,7 +288,21 @@ LADDERS = [
 
 # Running timers and counters, so they survive a closed tab and show on every device.
 # Started = when it was last started (Unix seconds), blank while paused; Elapsed = seconds banked before that.
-TIMERS_HEADER = ["ID", "Item ID", "Label", "Mode", "Length", "Started", "Elapsed", "Reps", "Created"]
+TIMERS_HEADER = ["ID", "Item ID", "Label", "Mode", "Length", "Started", "Elapsed", "Reps", "Created", "Options",
+                 "Board"]
+
+# Boards: saved sets of timers you start together. Options: repeat, delay=10, work=40, rest=20, rounds=8,
+# color=blue. Mode: Stopwatch, Countdown, Counter or Interval.
+BOARDS_HEADER = ["Board", "Label", "Mode", "Length", "Item", "Options"]
+BOARDS = [
+    ["Gym", "Workout", "Stopwatch", "", "", "color=blue"],
+    ["Gym", "Rest", "Countdown", 90, "", "color=orange"],
+    ["Morning", "Plank", "Countdown", 60, "Plank", "color=green"],
+    ["Morning", "Dead hang", "Countdown", 30, "Dead hang", "color=green"],
+    ["Intervals", "Tabata", "Interval", "", "", "work=20, rest=10, rounds=8, color=red"],
+]
+# What each timer did: logged, discarded, or finished.
+TIMER_HISTORY_HEADER = ["Timestamp", "Label", "Mode", "Seconds", "Reps", "Outcome", "Board"]
 
 TABS = {
     "Items": (ITEMS_HEADER, ITEMS),
@@ -293,4 +314,6 @@ TABS = {
     "Settings": (SETTINGS_HEADER, SETTINGS),
     "Timers": (TIMERS_HEADER, []),
     "Ladders": (LADDERS_HEADER, LADDERS),
+    "Boards": (BOARDS_HEADER, BOARDS),
+    "Timer history": (TIMER_HISTORY_HEADER, []),
 }

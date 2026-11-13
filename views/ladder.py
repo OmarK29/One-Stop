@@ -98,11 +98,11 @@ def _started(ctx: Ctx, h: logic.Hierarchy, run: logic.Timer, rungs: list[logic.R
     item = h.find(r.logs_as) if r.logs_as else None
     follow = ""
     if item and item.good:
-        if item.measure == "Check" and not item.variants:
+        if not item.inputs and not item.variants:
             log_item(ctx, item, "Ladder")
         else:
-            start_timer(ctx, item, "Counter" if item.measure == "Reps" else "Stopwatch")
-            follow = f" A {'counter' if item.measure == 'Reps' else 'timer'} for {item.name} is running below."
+            start_timer(ctx, item, "Counter" if item.inputs == ["Reps"] else "Stopwatch")
+            follow = f" A {'counter' if item.inputs == ['Reps'] else 'timer'} for {item.name} is running below."
     more = f" Once you're going, “{rungs[i - 1].do}” is fair game, but you don't owe it." if i > 0 else ""
     st.session_state.ladder_flash = f"You started: {r.do}. That was the hard part. +{logic.LADDER_XP} XP.{follow}{more}"
     st.rerun()
@@ -161,7 +161,7 @@ def _new_ladder(ctx: Ctx, ladders: dict[str, list[logic.Rung]]) -> None:
         st.error("Give it a goal and at least two steps.")
         return
     if name in ladders:
-        st.error(f"There's already a ladder called {name}. Edit it on Edit → Ladders.")
+        st.error(f"There's already a ladder called {name}. Edit it on Manage → Ladders.")
         return
     df = ctx.store.read("Ladders")
     new = pd.DataFrame({"Ladder": name, "Step": range(1, len(lines) + 1), "Do": lines, "Minutes": int(minutes),

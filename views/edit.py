@@ -17,12 +17,19 @@ CC = st.column_config
 
 
 def page(ctx: Ctx) -> None:
-    st.subheader("Edit")
-    st.caption("Changes save to your Google Sheet. You can also edit the sheet directly, then tap Refresh.")
-    t_skill, t_items, t_trackers, t_ladders, t_tree, t_settings = st.tabs(
-        ["Skills", "All items (table)", "Trackers", "Ladders", "Guide me tree", "Settings"])
+    st.subheader("Manage")
+    st.caption("Everything you log, track and time, and how. Changes save to your Google Sheet; you can also edit "
+               "the sheet directly, then tap Refresh.")
+    t_skill, t_items, t_trackers, t_ladders, t_boards, t_io, t_tree, t_settings = st.tabs(
+        ["Skills", "All items (table)", "Trackers", "Ladders", "Timer boards", "Import / export", "Guide me tree",
+         "Settings"])
     with t_ladders:
         _ladders(ctx)
+    with t_boards:
+        _boards(ctx)
+    with t_io:
+        from views import transfer
+        transfer.section(ctx)
     with t_skill:
         _skill_editor(ctx)
     with t_items:
@@ -61,8 +68,8 @@ def _items(ctx: Ctx) -> None:
                          format_func=lambda i: " › ".join(b for b in (h.path(i), h.items[i].name) if b))
     inactive = c2.toggle("Show inactive", key="ed_inactive")
 
-    cols = ["ID", "Item", "Kind", "Parents", "Step", "Measure", "Variants", "Domain", "Period", "Target", "Unit",
-            "XP", "Priority", "Pinned", "Block", "Tags", "Counters", "Active", "Notes"]
+    cols = ["ID", "Item", "Kind", "Parents", "Step", "Inputs", "Variants", "Rest", "Domain", "Period", "Target",
+            "Unit", "XP", "Priority", "Pinned", "Block", "Tags", "Counters", "Active", "Notes", "Measure"]
     view = df[cols + ["_row"]].reset_index(drop=True)
     keep = pd.Series(True, index=view.index)
     if under:
@@ -79,20 +86,25 @@ def _items(ctx: Ctx) -> None:
     view["Step"] = view["Step"].map(lambda v: logic.to_int(v, 0) or None)
     view["Active"] = view["Active"].map(lambda v: logic.to_bool(v, True))
     view["Pinned"] = view["Pinned"].map(lambda v: logic.to_bool(v, True))
-    for col, options in (("Domain", logic.DOMAINS), ("Priority", logic.PRIORITIES), ("Measure", logic.MEASURES),
+    derived = {it.id: logic.inputs_text(it.inputs, it.sets) for it in items}  # older rows only have Measure
+    view["Inputs"] = [v if str(v).strip() else derived.get(str(i).strip(), "") for v, i in zip(view["Inputs"], view["ID"])]
+    view["Rest"] = view["Rest"].map(lambda v: logic.to_int(v, 0) or None)
+    for col, options in (("Domain", logic.DOMAINS), ("Priority", logic.PRIORITIES),
                          ("Unit", logic.UNITS), ("Period", logic.PERIODS)):
         view[col] = view[col].map(lambda v, o=options: logic.pick(o, v, "") or None)
 
     st.caption("**Group** = an umbrella: it can't be logged and adds up everything under it. **Parents** = the "
                "umbrellas an item sits under (comma-separated names; more than one is fine). **Step** = its rung "
-               "in a progression, 1 = easiest. **Measure** = what you enter when logging. **Variants** = choices "
+               "in a progression, 1 = easiest. **Inputs** = what you enter when logging: any of Reps, Time, Weight, "
+               "Distance, Effort, plus Sets to log set by set (blank = yes/no). **Rest** = seconds between sets in a "
+               "workout. **Variants** = choices "
                "picked when logging (e.g. Still, Moving, Jump). **Target** counts in **Unit**; 0 = no goal. "
                "**Pinned** = shows on Today. Blank Domain or Priority comes from the umbrella. **Floor** = "
                "non-negotiable. Unideal items never cost XP. Leave ID blank on new rows.")
     key = f"ed_items_{under}_{inactive}"
     edited = st.data_editor(
         view, key=key, num_rows="dynamic", hide_index=True, width="stretch", height=460,
-        column_order=cols[1:] + ["ID"],
+        column_order=cols[1:-1] + ["ID"],
         column_config={
             "ID": CC.TextColumn(disabled=True, width="small"),
             "Item": CC.TextColumn(required=True, width="medium"),
@@ -100,8 +112,8 @@ def _items(ctx: Ctx) -> None:
             "Parents": CC.TextColumn(width="medium", help="Umbrella names, comma-separated",
                                      default=h.items[under].name if under else None),
             "Step": CC.NumberColumn(min_value=0, max_value=50, step=1, help="Rung in a progression; 1 = easiest"),
-            "Measure": CC.SelectboxColumn(options=logic.MEASURES, default="Check",
-                                          help="Check = one tap; Reps, Time or Both ask when you log"),
+            "Inputs": CC.TextColumn(help="e.g. Sets, Reps, Weight · Time, Distance · blank = yes/no"),
+            "Rest": CC.NumberColumn(min_value=0, max_value=1800, step=15, help="Seconds; blank = Settings default"),
             "Variants": CC.TextColumn(help="Comma-separated, picked when logging"),
             "Domain": CC.SelectboxColumn(options=logic.DOMAINS, help="Blank = same as its umbrella"),
             "Period": CC.SelectboxColumn(options=logic.PERIODS, default="Daily"),
@@ -119,6 +131,10 @@ def _items(ctx: Ctx) -> None:
     if st.button("Save items", type="primary", key="save_ed_items", icon=":material/save:"):
         # Rows hidden by the filter go back where they were; new rows go at the end.
         full = pd.concat([hidden, edited], ignore_index=True).sort_values("_row", na_position="last")
+        # Measure follows Inputs, for older code and sheets that still read it
+        full["Measure"] = [logic.measure_of([i for i in logic.INPUTS if i.lower() in
+                                             {t.lower() for t in logic.split_list(v)}]) if str(v).strip() else m
+                           for v, m in zip(full["Inputs"].fillna(""), full["Measure"].fillna(""))]
         ctx.store.replace("Items", full)
         st.toast("Saved Items to the sheet", icon="💾")
         st.session_state.pop(key, None)
@@ -179,6 +195,30 @@ def _ladders(ctx: Ctx) -> None:
     _save(ctx, "Ladders", edited, "ed_ld")
 
 
+def _boards(ctx: Ctx) -> None:
+    st.markdown("A **board** is a set of timers you start together from the Timers page. Rows with the same "
+                "**Board** are one board. **Mode** is Stopwatch, Countdown, Interval or Counter; **Length** is "
+                "seconds for a countdown. **Item** is an optional skill the timer logs to. **Options**: `repeat`, "
+                "`delay=10`, `work=40, rest=20, rounds=8` (intervals), `color=blue` (blue, green, orange, red, "
+                "violet, gray).")
+    try:
+        df = ctx.store.read("Boards")
+    except Exception:
+        st.info("The Boards tab appears the next time the app restarts.")
+        return
+    view = _editor_df(df, ["Board", "Label", "Mode", "Length", "Item", "Options"])
+    view["Length"] = pd.to_numeric(view["Length"], errors="coerce")
+    edited = st.data_editor(
+        view, key="ed_bd", num_rows="dynamic", hide_index=True, width="stretch",
+        column_config={"Board": CC.TextColumn(required=True, width="small"),
+                       "Label": CC.TextColumn(width="medium"),
+                       "Mode": CC.SelectboxColumn(options=logic.TIMER_MODES, default="Countdown"),
+                       "Length": CC.NumberColumn(min_value=0, max_value=86400, step=5, help="Seconds"),
+                       "Item": CC.TextColumn(width="medium"),
+                       "Options": CC.TextColumn(width="medium")})
+    _save(ctx, "Boards", edited, "ed_bd")
+
+
 def _tree(ctx: Ctx) -> None:
     q = ctx.store.read("Questions")
     a = ctx.store.read("Actions")
@@ -225,7 +265,7 @@ def _zones() -> list[str]:
 def _settings(ctx: Ctx) -> None:
     s, clock = ctx.settings, ctx.clock
     zones = _zones()
-    pages = ["Guide me", "Today", "Track", "Timers", "Me", "Progress"]
+    pages = ["Guide me", "Today", "Track", "Workout", "Timers", "Me", "Progress"]
     with st.form("settings"):
         st.markdown("##### Day and XP")
         tz = st.selectbox("Time zone", zones, index=zones.index(clock.timezone) if clock.timezone in zones else 0)
@@ -247,7 +287,15 @@ def _settings(ctx: Ctx) -> None:
 
         ladder_min = st.number_input("Ease ladders: minutes to start each step", 1, 120,
                                      logic.to_int(s.get("ladder_minutes"), 5),
-                                     help="Used when a step's Minutes is blank. Change one ladder on Edit → Ladders.")
+                                     help="Used when a step's Minutes is blank. Change one ladder on Manage → Ladders.")
+
+        st.markdown("##### Workouts and units")
+        c1, c2, c3 = st.columns(3)
+        rest_default = c1.number_input("Rest between sets (s)", 0, 1800, logic.to_int(s.get("rest_seconds"), 90),
+                                       step=15)
+        w_units, d_units = ["lb", "kg"], ["mi", "km"]
+        w_unit = c2.selectbox("Weight in", w_units, index=_index(w_units, s.get("weight_unit") or "lb"))
+        d_unit = c3.selectbox("Distance in", d_units, index=_index(d_units, s.get("distance_unit") or "mi"))
 
         st.markdown("##### Sleep and screen time")
         c1, c2 = st.columns(2)
@@ -279,6 +327,7 @@ def _settings(ctx: Ctx) -> None:
                         "track_sleep": track_sleep, "sleep_goal_hours": sleep,
                         "track_screen_time": track_screen, "screen_time_limit_hours": screen,
                         "profile_age": int(age), "profile_sex": "" if sex == "Not set" else sex,
+                        "rest_seconds": int(rest_default), "weight_unit": w_unit, "distance_unit": d_unit,
                         "avatar_skin": skin, "avatar_hair": hair, "pet_name": pet.strip() or "Pip"})
             ctx.store.replace("Settings", pd.DataFrame({"Key": list(new), "Value": list(new.values())}))
             st.toast("Settings saved", icon="💾")
@@ -365,9 +414,14 @@ def _skill_form(ctx: Ctx, df: pd.DataFrame, h: logic.Hierarchy, it: logic.Item |
                                  default=current, disabled=kind == "Identity" and not current,
                                  help="More than one is fine.")
         if not group:
-            measure = st.segmented_control("When you log it, enter", logic.MEASURES,
-                                           default=it.measure if it else "Reps",
-                                           format_func=lambda m: {"Check": "Just a tick", "Both": "Reps + time"}.get(m, m))
+            inputs = st.pills("When you log it, enter", logic.INPUTS, selection_mode="multi",
+                              default=it.inputs if it else ["Reps"],
+                              help="Pick none for a yes/no item. Time can be typed or timed with the stopwatch.")
+            c1, c2 = st.columns(2)
+            sets = c1.toggle("Log set by set", value=it.sets if it else True,
+                             help="Each set is its own row, like a gym tracker")
+            rest = c2.number_input("Rest between sets (s)", 0, 1800, it.rest if it and it.rest else 0, step=15,
+                                   help="For workouts. 0 = the default in Settings")
             variants = st.multiselect("Variants (same level, different ways)", it.variants if it else [],
                                       default=it.variants if it else [], accept_new_options=True,
                                       placeholder="Type one and press Enter",
@@ -407,7 +461,8 @@ def _skill_form(ctx: Ctx, df: pd.DataFrame, h: logic.Hierarchy, it: logic.Item |
               "Domain": "" if domain == "Same as umbrella" else domain,
               "XP": 0 if group else int(xp), "Pinned": pinned, "Active": active, "Notes": notes}
     if not group:
-        values |= {"Measure": measure or "Check", "Variants": ", ".join(v.strip() for v in variants if v.strip())}
+        values |= {"Inputs": logic.inputs_text(inputs or [], sets) or "", "Measure": logic.measure_of(inputs or []),
+                   "Rest": int(rest) or "", "Variants": ", ".join(v.strip() for v in variants if v.strip())}
     if it is None:
         new_id = _next_id(df)
         df = pd.concat([df, pd.DataFrame([_blank_row(new_id) | values])], ignore_index=True)
@@ -461,6 +516,7 @@ def _progression(ctx: Ctx, df: pd.DataFrame, h: logic.Hierarchy, g: logic.Item) 
     rows = rows[rows["Rung"].astype(str).str.strip() != ""]
     rows = rows.assign(_o=[logic.to_int(o, 999) for o in rows["Order"]], _i=range(len(rows))).sort_values(["_o", "_i"])
     measure = rungs[0].measure if rungs else "Reps"
+    inputs = logic.inputs_text(rungs[0].inputs, rungs[0].sets) if rungs else "Sets, Reps"
     kept = set()
     for step, r in enumerate(rows.to_dict("records"), start=1):
         name = str(r["Rung"]).strip()
@@ -480,7 +536,7 @@ def _progression(ctx: Ctx, df: pd.DataFrame, h: logic.Hierarchy, g: logic.Item) 
         else:
             new_id = _next_id(df)
             df = pd.concat([df, pd.DataFrame([_blank_row(new_id) | {
-                "Item": name, "Kind": "Good", "Parents": g.name, "Step": step, "Measure": measure,
+                "Item": name, "Kind": "Good", "Parents": g.name, "Step": step, "Measure": measure, "Inputs": inputs,
                 "Variants": variants, "Period": "Weekly", "Target": 0, "XP": 5, "Pinned": False}])],
                 ignore_index=True)
     for r in rungs:

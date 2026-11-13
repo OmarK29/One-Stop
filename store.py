@@ -1,4 +1,4 @@
-"""Google Sheets storage. One spreadsheet, eight tabs. Reads are cached per session and
+"""Google Sheets storage. One spreadsheet, ten tabs. Reads are cached per session and
 cleared on every write, so the app stays fast without going stale."""
 from __future__ import annotations
 
@@ -164,6 +164,8 @@ class Store:
                     if ws.col_count < len(new_header):
                         ws.add_cols(len(new_header) - ws.col_count)
                     ws.update(range_name="A1", values=[new_header], value_input_option="RAW")
+                    self._headers.pop(title, None)
+                    self._blank_columns(ws, len(current), len(new_header))
             self._ws[title] = ws
             if title == "Items" and upgrading:
                 self._add_starter_skills()
@@ -211,6 +213,17 @@ class Store:
                      for col in CHECKBOXES.get(title, []) if col in header]
             if reqs:
                 self.ss.batch_update({"requests": reqs})
+        except Exception:
+            pass
+
+    def _blank_columns(self, ws, start: int, end: int) -> None:
+        """New columns copy the format of the column to their left; next to a checkbox column that means every
+        cell reads FALSE. Remove any inherited validation and empty the cells below the header."""
+        try:
+            self.ss.batch_update({"requests": [{"setDataValidation": {"range": {
+                "sheetId": ws.id, "startRowIndex": 1, "endRowIndex": ws.row_count,
+                "startColumnIndex": start, "endColumnIndex": end}}}]})
+            ws.batch_clear([f"{_col_letter(start + 1)}2:{_col_letter(end)}{ws.row_count}"])
         except Exception:
             pass
 
@@ -356,12 +369,24 @@ class Store:
         self._style_header(ws, len(header))
         self.cache.pop(title, None)
 
+    def header(self, title: str) -> list[str]:
+        if title not in self._headers:
+            self._headers[title] = self.ws(title).row_values(1)
+        return self._headers[title]
+
+    def append_dicts(self, title: str, records: list[dict]) -> None:
+        """Append rows by column name, in the sheet's own column order (older sheets can differ from seed)."""
+        if not records:
+            return
+        header = self.header(title)
+        rows = [[_cell(r.get(h, "")) if r.get(h, "") not in (None, "") else "" for h in header] for r in records]
+        self.ws(title).append_rows(rows, value_input_option="RAW", table_range="A1")
+        self.cache.pop(title, None)
+
     def update_row(self, title: str, sheet_row: int, values: dict) -> None:
         """Set some cells of one row, by column name. Columns the sheet doesn't have are skipped."""
         ws = self.ws(title)
-        if title not in self._headers:
-            self._headers[title] = ws.row_values(1)
-        header = self._headers[title]
+        header = self.header(title)
         updates = [{"range": f"{_col_letter(header.index(k) + 1)}{int(sheet_row)}", "values": [[_cell(v)]]}
                    for k, v in values.items() if k in header]
         if updates:

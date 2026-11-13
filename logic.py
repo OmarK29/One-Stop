@@ -15,6 +15,8 @@ GROUP_KINDS = ("Group", "Goal", "Identity")  # umbrellas: can't be logged, add u
 PERIODS = ["Daily", "Weekly"]
 PRIORITIES = ["Floor", "High", "Normal", "Low"]
 MEASURES = ["Check", "Reps", "Time", "Both"]
+INPUTS = ["Reps", "Time", "Weight", "Distance", "Effort"]  # what you can enter when logging; none = yes/no
+MEASURE_INPUTS = {"Reps": ["Sets", "Reps"], "Time": ["Time"], "Both": ["Reps", "Time"]}  # for rows without Inputs
 UNITS = ["Logs", "Reps", "Minutes"]
 SHOWS = ["Auto", "Reps", "Time", "Count"]
 WEEKDAYS = ["Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday", "Sunday"]
@@ -115,6 +117,13 @@ class Item:
     unit: str = "Logs"  # what Target counts
     pinned: bool = True
     ancestors: set[str] = field(default_factory=set)  # lowercase names and IDs of every umbrella above
+    inputs: list[str] = field(default_factory=list)  # from INPUTS, in that order; empty = yes/no
+    sets: bool = False  # logged set by set
+    rest: int = 0  # seconds of rest after a set in a workout; 0 = the default from Settings
+
+    @property
+    def yes_no(self) -> bool:
+        return not self.inputs
 
     @property
     def good(self) -> bool:
@@ -155,13 +164,41 @@ def parse_items(df: pd.DataFrame) -> list[Item]:
             row=pos,
             parents=split_list(r.get("Parents")),
             step=max(0, to_int(r.get("Step"), 0)),
-            measure="Check" if kind != "Good" else pick(MEASURES, r.get("Measure"), "Check"),
+            measure=pick(MEASURES, r.get("Measure"), "Check"),
             variants=split_list(r.get("Variants")),
             unit=pick(UNITS, r.get("Unit"), "Logs") if kind != "Unideal" else "Logs",
             pinned=to_bool(r.get("Pinned"), True),
+            rest=max(0, to_int(r.get("Rest"), 0)),
         ))
+        _set_inputs(items[-1], r.get("Inputs"))
     _inherit(items, build_hierarchy(items))
     return items
+
+
+def _set_inputs(it: Item, raw) -> None:
+    """Inputs from the Inputs column, or from the older Measure column when Inputs is blank. Measure is kept
+    in step (Check, Reps, Time or Both) for code and sheets that still read it."""
+    if it.kind != "Good":
+        it.inputs, it.sets, it.measure = [], False, "Check"
+        return
+    if str(raw or "").strip().upper() in ("TRUE", "FALSE"):  # a stray checkbox, not something typed
+        raw = ""
+    tokens = {t.lower() for t in split_list(raw)} if str(raw or "").strip() else \
+        {t.lower() for t in MEASURE_INPUTS.get(it.measure, [])}
+    it.inputs = [i for i in INPUTS if i.lower() in tokens]
+    it.sets = "sets" in tokens and bool(it.inputs)
+    reps, time_ = "Reps" in it.inputs, "Time" in it.inputs
+    it.measure = "Both" if reps and time_ else "Reps" if reps else "Time" if time_ else \
+        ("Both" if it.inputs else "Check")
+
+
+def inputs_text(inputs: list[str], sets: bool) -> str:
+    return ", ".join((["Sets"] if sets and inputs else []) + [i for i in INPUTS if i in inputs])
+
+
+def measure_of(inputs: list[str]) -> str:
+    reps, time_ = "Reps" in inputs, "Time" in inputs
+    return "Both" if reps and time_ else "Reps" if reps else "Time" if time_ else ("Both" if inputs else "Check")
 
 
 def _inherit(items: list[Item], h: "Hierarchy") -> None:
@@ -345,7 +382,7 @@ def log_days(log_df: pd.DataFrame, clock: Clock) -> pd.Series:
 
 def log_frame(log_df: pd.DataFrame, clock: Clock) -> pd.DataFrame:
     """The log as plain columns: id, day, reps, secs, variant, row (sheet order). Rows without a day are dropped."""
-    cols = ["id", "day", "reps", "secs", "variant", "row"]
+    cols = ["id", "day", "reps", "secs", "variant", "row", "weight", "dist", "effort", "session"]
     if log_df.empty:
         return pd.DataFrame(columns=cols)
     get = lambda c: log_df[c] if c in log_df.columns else pd.Series("", index=log_df.index)
@@ -356,6 +393,10 @@ def log_frame(log_df: pd.DataFrame, clock: Clock) -> pd.DataFrame:
         "secs": get("Seconds").map(lambda v: max(0, to_int(v, 0))),
         "variant": get("Variant").map(lambda v: str(v).strip()),
         "row": get("_row") if "_row" in log_df.columns else pd.Series(range(len(log_df)), index=log_df.index),
+        "weight": get("Weight").map(lambda v: max(0.0, to_float(v, 0.0))),
+        "dist": get("Distance").map(lambda v: max(0.0, to_float(v, 0.0))),
+        "effort": get("Effort").map(lambda v: max(0, min(10, to_int(v, 0)))),
+        "session": get("Session").map(lambda v: str(v).strip()),
     })
     return out[out["day"].notna()].reset_index(drop=True)
 
@@ -365,11 +406,15 @@ class Totals:
     count: int = 0
     reps: int = 0
     secs: int = 0
+    dist: float = 0.0
+    volume: float = 0.0  # reps × weight
 
     def __iadd__(self, other: "Totals") -> "Totals":
         self.count += other.count
         self.reps += other.reps
         self.secs += other.secs
+        self.dist += other.dist
+        self.volume += other.volume
         return self
 
     def amount(self, unit: str) -> int:
@@ -386,8 +431,12 @@ def leaf_totals(frame: pd.DataFrame, start: dt.date | None = None, end: dt.date 
         f = f[f["day"] <= end]
     if f.empty:
         return {}
-    g = f.groupby(by).agg(count=("id", "size"), reps=("reps", "sum"), secs=("secs", "sum"))
-    return {k: Totals(int(r["count"]), int(r["reps"]), int(r["secs"])) for k, r in g.iterrows()}
+    f = f.assign(_dist=f["dist"] if "dist" in f else 0.0,
+                 _vol=(f["reps"] * f["weight"]) if "weight" in f else 0.0)
+    g = f.groupby(by).agg(count=("id", "size"), reps=("reps", "sum"), secs=("secs", "sum"), dist=("_dist", "sum"),
+                          vol=("_vol", "sum"))
+    return {k: Totals(int(r["count"]), int(r["reps"]), int(r["secs"]), float(r["dist"]), float(r["vol"]))
+            for k, r in g.iterrows()}
 
 
 def totals(h: Hierarchy, frame: pd.DataFrame, start: dt.date | None = None,
@@ -443,7 +492,65 @@ def last_log(frame: pd.DataFrame, iid: str) -> dict | None:
     if rows.empty:
         return None
     r = rows.loc[rows["row"].idxmax()]
-    return {"reps": int(r["reps"]), "secs": int(r["secs"]), "variant": str(r["variant"])}
+    return {"reps": int(r["reps"]), "secs": int(r["secs"]), "variant": str(r["variant"]),
+            "weight": float(r.get("weight", 0) or 0), "dist": float(r.get("dist", 0) or 0),
+            "effort": int(r.get("effort", 0) or 0)}
+
+
+def last_sets(frame: pd.DataFrame, iid: str, before_session: str = "") -> list[dict]:
+    """The sets of the last time you did this (the last session, or the last day), oldest first."""
+    rows = frame[(frame["id"] == iid) & ((frame["session"] != before_session) if before_session else True)]
+    if rows.empty:
+        return []
+    last = rows.loc[rows["row"].idxmax()]
+    same = rows[rows["session"] == last["session"]] if last["session"] else rows[rows["day"] == last["day"]]
+    return [{"reps": int(r.reps), "secs": int(r.secs), "weight": float(r.weight), "dist": float(r.dist),
+             "effort": int(r.effort), "variant": str(r.variant)} for r in same.sort_values("row").itertuples()]
+
+
+def fmt_set(x: dict) -> str:
+    """'12 × 25 lb', '1:30', '3.1 mi in 28:00', '✓'."""
+    bits = []
+    if x.get("reps"):
+        bits.append(f"{x['reps']}" + (f" × {x['weight']:g} {WEIGHT_UNIT}" if x.get("weight") else " reps"))
+    elif x.get("weight"):
+        bits.append(f"{x['weight']:g} {WEIGHT_UNIT}")
+    if x.get("dist"):
+        bits.append(f"{x['dist']:g} {DIST_UNIT}" + (f" in {fmt_secs(x['secs'])}" if x.get("secs") else ""))
+    elif x.get("secs"):
+        bits.append(fmt_secs(x["secs"]))
+    if x.get("effort"):
+        bits.append(f"effort {x['effort']}")
+    return " · ".join(bits) or "✓"
+
+
+BEST_LABELS = {"reps": "reps", "secs": "time", "weight": "weight", "dist": "distance", "volume": "set volume"}
+
+
+def bests(frame: pd.DataFrame, iid: str) -> dict[str, float]:
+    """Your best single log for this item: most reps, longest time, heaviest, farthest, biggest reps × weight."""
+    rows = frame[frame["id"] == iid]
+    if rows.empty:
+        return {}
+    return {"reps": float(rows["reps"].max()), "secs": float(rows["secs"].max()), "weight": float(rows["weight"].max()),
+            "dist": float(rows["dist"].max()), "volume": float((rows["reps"] * rows["weight"]).max())}
+
+
+def new_bests(previous: dict[str, float], entry: dict) -> list[str]:
+    """What this log beats. Nothing on a first-ever log: there's nothing to beat yet."""
+    if not previous:
+        return []
+    now = {"reps": entry.get("reps", 0), "secs": entry.get("secs", 0), "weight": entry.get("weight", 0),
+           "dist": entry.get("dist", 0), "volume": entry.get("reps", 0) * entry.get("weight", 0)}
+    out = []
+    for k, v in now.items():
+        if v and v > previous.get(k, 0):
+            if k == "volume" and ("reps" in [o[0] for o in out] or not entry.get("weight")):
+                continue
+            shown = fmt_secs(int(v)) if k == "secs" else f"{v:g}" + {"weight": f" {WEIGHT_UNIT}",
+                                                                      "dist": f" {DIST_UNIT}"}.get(k, "")
+            out.append((k, f"{BEST_LABELS[k]} {shown}"))
+    return [t for _, t in out]
 
 
 def recent_ids(frame: pd.DataFrame, limit: int = 8) -> list[str]:
@@ -475,8 +582,19 @@ def fmt_totals(t: Totals | None, show: str = "Auto") -> str:
         return f"{t.reps} reps" if t.reps else ""
     if show == "Time":
         return fmt_secs(t.secs) if t.secs else ""
-    parts = ([f"{t.reps} reps"] if t.reps else []) + ([fmt_secs(t.secs)] if t.secs else [])
+    parts = ([f"{t.reps} reps"] if t.reps else []) + ([fmt_secs(t.secs)] if t.secs else []) + \
+        ([f"{t.dist:g} {DIST_UNIT}"] if t.dist else [])
     return " · ".join(parts) or ("✓" if t.count == 1 else f"{t.count}×")
+
+
+DIST_UNIT = "mi"  # set from Settings at startup (set_units)
+WEIGHT_UNIT = "lb"
+
+
+def set_units(settings: dict) -> None:
+    global DIST_UNIT, WEIGHT_UNIT
+    DIST_UNIT = str(settings.get("distance_unit") or "mi").strip() or "mi"
+    WEIGHT_UNIT = str(settings.get("weight_unit") or "lb").strip() or "lb"
 
 
 def fmt_amount(n: int, unit: str) -> str:
@@ -742,7 +860,9 @@ def weekly_volume(h: Hierarchy, iid: str, frame: pd.DataFrame, clock: Clock, wee
         total = Totals()
         for v in t.values():
             total += v
-        rows.append({"Week": pd.Timestamp(w), "Logs": total.count, "Reps": total.reps, "Minutes": round(total.secs / 60, 1)})
+        rows.append({"Week": pd.Timestamp(w), "Logs": total.count, "Reps": total.reps,
+                     "Minutes": round(total.secs / 60, 1), "Distance": round(total.dist, 2),
+                     "Volume": round(total.volume)})
     return pd.DataFrame(rows)
 
 
@@ -864,7 +984,7 @@ def fmt_hm(minutes: int | float) -> str:
 
 # ---------- timers ----------
 
-TIMER_MODES = ["Stopwatch", "Countdown", "Counter"]
+TIMER_MODES = ["Stopwatch", "Countdown", "Interval", "Counter"]
 LADDER_MODE = "Ladder"  # an ease ladder run, kept in the Timers tab: Label = ladder, Reps = step index
 
 
@@ -879,23 +999,34 @@ class Timer:
     elapsed: float  # seconds banked before `started`
     reps: int
     row: int
+    options: dict = field(default_factory=dict)  # repeat, delay, work, rest, rounds, color
+    board: str = ""
 
     @property
     def running(self) -> bool:
         return self.started is not None
 
     def seconds(self, now: float) -> int:
-        return int(self.elapsed + (max(0.0, now - self.started) if self.started is not None else 0))
+        """Seconds run so far; negative while a delayed start is still counting down to its start."""
+        return int(self.elapsed + (now - self.started if self.started is not None else 0))
 
     def finished(self, now: float) -> bool:
-        return self.mode == "Countdown" and self.length > 0 and self.seconds(now) >= self.length
+        """Past zero (a countdown keeps counting as overtime), or all interval rounds done."""
+        if self.mode == "Interval":
+            o = self.options
+            return interval_spot(max(0, self.seconds(now)), o.get("work", 0), o.get("rest", 0), o.get("rounds", 0))[3]
+        return (self.mode == "Countdown" and self.length > 0 and not self.options.get("repeat")
+                and self.seconds(now) >= self.length)
 
     def logged_secs(self, now: float) -> int:
-        """What 'Log' records: a countdown never counts past its length."""
+        """What 'Log' records: the time you actually did, overtime included; for intervals, the work time."""
+        s = max(0, self.seconds(now))
         if self.mode == "Counter":
             return 0
-        s = self.seconds(now)
-        return min(s, self.length) if self.mode == "Countdown" and self.length else s
+        if self.mode == "Interval":
+            o = self.options
+            return interval_work_secs(s, o.get("work", 0), o.get("rest", 0), o.get("rounds", 0))
+        return s
 
 
 def parse_timers(df: pd.DataFrame) -> list[Timer]:
@@ -906,10 +1037,11 @@ def parse_timers(df: pd.DataFrame) -> list[Timer]:
             continue
         started = str(r.get("Started", "")).strip()
         out.append(Timer(id=tid, item_id=str(r.get("Item ID", "")).strip(), label=str(r.get("Label", "")).strip(),
-                         mode=pick(TIMER_MODES + [LADDER_MODE], r.get("Mode"), "Stopwatch"), length=max(0, to_int(r.get("Length"), 0)),
+                         mode=pick(TIMER_MODES + [LADDER_MODE, SESSION_MODE], r.get("Mode"), "Stopwatch"), length=max(0, to_int(r.get("Length"), 0)),
                          started=to_float(started) if started else None,
                          elapsed=max(0.0, to_float(r.get("Elapsed"), 0.0)), reps=max(0, to_int(r.get("Reps"), 0)),
-                         row=to_int(r.get("_row"), 0)))
+                         row=to_int(r.get("_row"), 0), options=timer_options(r.get("Options")),
+                         board=str(r.get("Board", "") or "").strip()))
     return out
 
 
@@ -1222,3 +1354,207 @@ def walk(h: Hierarchy, gid: str, depth: int = 0, trail: frozenset = frozenset())
         yield depth, c
         if h.items[c].group:
             yield from walk(h, c, depth + 1, trail | {gid})
+
+
+# ---------- import and export ----------
+
+CSV_COLUMNS = ["Date", "Time", "Item", "Variant", "Set", "Reps", "Duration", "Weight", "Distance", "Effort", "Note"]
+
+
+def parse_duration(v) -> int | None:
+    """'1:30', '1:02:00', '90', '90s', '2m', '1.5 min' → seconds. None if it doesn't read as a time."""
+    s = str(v or "").strip().lower()
+    if not s:
+        return 0
+    if re.fullmatch(r"\d+(:\d{1,2}){1,2}", s):
+        parts = [int(x) for x in s.split(":")]
+        return sum(p * 60 ** i for i, p in enumerate(reversed(parts)))
+    m = re.fullmatch(r"(\d+(?:\.\d+)?)\s*(s|sec|secs|seconds|m|min|mins|minutes|h|hr|hrs|hours)?", s)
+    if not m:
+        return None
+    n, u = float(m.group(1)), (m.group(2) or "s")[0]
+    return int(round(n * {"s": 1, "m": 60, "h": 3600}[u]))
+
+
+def export_rows(log_df: pd.DataFrame, clock: Clock, start: dt.date | None = None, end: dt.date | None = None) -> pd.DataFrame:
+    """The log in the simple CSV format (CSV_COLUMNS), oldest first."""
+    if log_df.empty:
+        return pd.DataFrame(columns=CSV_COLUMNS)
+    days = log_days(log_df, clock)
+    out = []
+    for r, d in zip(log_df.to_dict("records"), days):
+        if d is None or (start and d < start) or (end and d > end):
+            continue
+        secs = to_int(r.get("Seconds"), 0)
+        out.append({"Date": d.isoformat(), "Time": str(r.get("Timestamp", ""))[11:16], "Item": r.get("Item", ""),
+                    "Variant": r.get("Variant", ""), "Set": r.get("Set", ""), "Reps": r.get("Reps", ""),
+                    "Duration": fmt_secs(secs) if secs else "", "Weight": r.get("Weight", ""),
+                    "Distance": r.get("Distance", ""), "Effort": r.get("Effort", ""), "Note": r.get("Note", "")})
+    return pd.DataFrame(out, columns=CSV_COLUMNS)
+
+
+@dataclass
+class ImportRow:
+    line: int
+    item: Item | None
+    raw_item: str
+    day: dt.date | None
+    time: str
+    variant: str
+    set_no: int
+    reps: int
+    secs: int
+    weight: float
+    dist: float
+    effort: int
+    note: str
+    problem: str  # empty when it's fine
+    new_variant: bool = False  # the variant isn't on the item yet; importing adds it
+
+
+def parse_import(text: str, items: list[Item], today: dt.date) -> list[ImportRow]:
+    """Rows in the CSV format, matched to your items by name (close spellings are fine). Columns can be in
+    any order and any can be missing except Item; Date defaults to today."""
+    import csv
+    import difflib
+    import io
+    lines = [ln for ln in str(text or "").strip().splitlines() if ln.strip() and not ln.strip().startswith("#")]
+    if not lines:
+        return []
+    reader = csv.reader(io.StringIO("\n".join(lines)), skipinitialspace=True)
+    rows = list(reader)
+    header = [h.strip().lower() for h in rows[0]]
+    if "item" not in header:  # no header row: assume the standard order
+        header = [c.lower() for c in CSV_COLUMNS]
+    else:
+        rows = rows[1:]
+    by_name = {it.name.lower(): it for it in items if it.active and not it.group and it.kind == "Good"}
+    out = []
+    for n, r in enumerate(rows, start=1):
+        rec = {h: (r[i].strip() if i < len(r) else "") for i, h in enumerate(header)}
+        raw = rec.get("item", "")
+        item = by_name.get(raw.lower())
+        if item is None and raw:
+            close = difflib.get_close_matches(raw.lower(), list(by_name), n=1, cutoff=0.75)
+            item = by_name[close[0]] if close else None
+        problem = "" if item else (f"No item called '{raw}'" if raw else "No item")
+        try:
+            day = dt.date.fromisoformat(rec["date"]) if rec.get("date") else today
+        except ValueError:
+            day, problem = None, problem or f"Can't read the date '{rec.get('date')}' (use 2026-11-13)"
+        secs = parse_duration(rec.get("duration") or rec.get("seconds") or "")
+        if secs is None:
+            secs, problem = 0, problem or f"Can't read the duration '{rec.get('duration')}' (use 1:30)"
+        variant = rec.get("variant", "")
+        known = {v.lower(): v for v in item.variants} if item else {}
+        variant = known.get(variant.lower(), variant)
+        out.append(ImportRow(n, item, raw, day, rec.get("time", ""), variant, to_int(rec.get("set"), 0),
+                             max(0, to_int(rec.get("reps"), 0)), secs, max(0.0, to_float(rec.get("weight"), 0.0)),
+                             max(0.0, to_float(rec.get("distance"), 0.0)), max(0, min(10, to_int(rec.get("effort"), 0))),
+                             rec.get("note", ""), problem,
+                             bool(item and variant and variant.lower() not in known)))
+    return out
+
+
+def ai_template(items: list[Item], today: dt.date) -> str:
+    """Instructions to paste into any AI assistant, so it turns what you say into rows One Stop can import."""
+    good = [it for it in sorted(items, key=lambda it: it.row) if it.active and it.kind == "Good"]
+    lines = [
+        "Turn what I tell you about my day into CSV rows for my One Stop app. Reply with only the CSV.",
+        f"Header (always include it): {','.join(CSV_COLUMNS)}",
+        f"Date is YYYY-MM-DD (today is {today.isoformat()}; use it unless I say another day). Time is HH:MM, "
+        "or blank.",
+        "Item must be one of the names below, spelled exactly. Variant must be one listed for that item, or blank.",
+        "One row per set when I describe sets (Set = 1, 2, 3...). Otherwise one row per thing, Set blank.",
+        f"Duration is m:ss or h:mm:ss. Weight is in {WEIGHT_UNIT}, Distance in {DIST_UNIT}. Effort is 1-10 if I "
+        "say how hard it felt. Leave anything I didn't mention blank. Quote any field with a comma in it.",
+        "If I mention something that isn't in the list, use my words for Item; the app will flag it.",
+        "",
+        "My items (what each takes):",
+    ]
+    for it in good:
+        what = inputs_text(it.inputs, it.sets) or "yes/no"
+        lines.append(f"- {it.name}: {what}" + (f"; variants: {', '.join(it.variants)}" if it.variants else ""))
+    lines += ["", "Example:", ",".join(CSV_COLUMNS),
+              f"{today.isoformat()},07:10,Push-ups,,1,15,,,,,",
+              f"{today.isoformat()},07:12,Push-ups,,2,12,,,,7,",
+              f"{today.isoformat()},,Plank,,,,1:30,,,,felt strong",
+              f"{today.isoformat()},,Fajr,,,,,,,,"]
+    return "\n".join(lines)
+
+
+# ---------- timer options ----------
+
+TIMER_COLORS = ["blue", "green", "orange", "red", "violet", "gray"]
+
+
+def timer_options(raw) -> dict:
+    """'repeat, delay=10, work=40, rest=20, rounds=8, color=blue' → {'repeat': True, 'delay': 10, ...}."""
+    out: dict = {}
+    for tok in split_list(raw):
+        k, _, v = tok.partition("=")
+        k = k.strip().lower()
+        out[k] = (v.strip() if k == "color" else to_int(v, 0)) if _ else True
+    return out
+
+
+def options_text(opts: dict) -> str:
+    return ", ".join(k if v is True else f"{k}={v}" for k, v in opts.items() if v not in (None, False, 0, ""))
+
+
+def interval_spot(secs: float, work: int, rest: int, rounds: int) -> tuple[str, int, float, bool]:
+    """Phase ('Work' or 'Rest'), round number, seconds left in the phase, and whether all rounds are done."""
+    cycle = max(1, work + rest)
+    if rounds and secs >= cycle * rounds - rest:
+        return "Done", rounds, 0, True
+    n, into = divmod(secs, cycle)
+    if into < work:
+        return "Work", int(n) + 1, work - into, False
+    return "Rest", int(n) + 1, cycle - into, False
+
+
+def interval_work_secs(secs: float, work: int, rest: int, rounds: int) -> int:
+    """Seconds of work done so far, for logging."""
+    cycle = max(1, work + rest)
+    n, into = divmod(max(0.0, secs), cycle)
+    total = n * work + min(into, work)
+    return int(min(total, work * rounds) if rounds else total)
+
+
+# ---------- month report ----------
+
+def month_report(items: list[Item], frame: pd.DataFrame, log_df: pd.DataFrame, clock: Clock, start: dt.date,
+                 end: dt.date) -> dict:
+    """Totals for one month: logs, active days, reps, minutes, distance, sets, workouts, new bests,
+    ladder starts and your most-logged skills."""
+    by_id = {it.id: it for it in items}
+    f = frame[(frame["day"] >= start) & (frame["day"] <= end)] if not frame.empty else frame
+    good = f[f["id"].isin({i for i, it in by_id.items() if it.kind == "Good"})] if not f.empty else f
+    before = frame[frame["day"] < start] if not frame.empty else frame
+    prs = []
+    for iid in (good["id"].unique() if not good.empty else []):
+        best = bests(before, iid)  # grows as the month goes, so each new best is counted once
+        for r in good[good["id"] == iid].sort_values("row").itertuples():
+            entry = {"reps": r.reps, "secs": r.secs, "weight": r.weight, "dist": r.dist}
+            hit = new_bests(best, entry)
+            if hit:
+                prs.append(f"{by_id[iid].name}: {', '.join(hit)}")
+            now = entry | {"volume": r.reps * r.weight}
+            best = {k: max(best.get(k, 0), now[k]) for k in now}
+    top = good.groupby("id").size().sort_values(ascending=False).head(5) if not good.empty else pd.Series(dtype=int)
+    return {
+        "logs": int(len(good)),
+        "days": int(f["day"].nunique()) if not f.empty else 0,
+        "reps": int(good["reps"].sum()) if not good.empty else 0,
+        "minutes": int(good["secs"].sum()) // 60 if not good.empty else 0,
+        "distance": float(good["dist"].sum()) if not good.empty else 0.0,
+        "sets": int((good["session"] != "").sum()) if not good.empty else 0,
+        "workouts": int(f[f["id"] == WORKOUT_ID]["id"].size) if not f.empty else 0,
+        "ladder_starts": int(f[f["id"] == LADDER_ID]["id"].size) if not f.empty else 0,
+        "bests": prs,
+        "top": [(by_id[i].name, int(n)) for i, n in top.items() if i in by_id],
+    }
+
+
+WORKOUT_ID = "WORKOUT"  # a finished workout session in the Log
+SESSION_MODE = "Session"  # a running workout, kept in the Timers tab: Item ID = its skills, comma-separated

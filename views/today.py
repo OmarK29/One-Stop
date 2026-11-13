@@ -205,7 +205,7 @@ def _item_button(ctx: Ctx, it: logic.Item, counts: dict, prefix: str, caption: s
     if st.button(label, key=f"{prefix}_{it.id}", width="stretch", disabled=done,
                  icon=":material/check_circle:" if done else ":material/radio_button_unchecked:",
                  help=it.notes or None):
-        if it.group or it.measure != "Check" or it.variants:
+        if it.group or it.inputs or it.variants:
             log_view.open_dialog(ctx, it.name, scope=[it.id])
         else:
             log_item(ctx, it, "Today")

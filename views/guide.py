@@ -18,7 +18,7 @@ def page(ctx: Ctx) -> None:
     tree = logic.build_tree(ctx.store.read("Questions"), ctx.store.read("Actions"))
     ss = st.session_state
     if tree.start is None:
-        st.info("There are no questions yet. Add some on the Edit page.")
+        st.info("There are no questions yet. Add some on the Manage page.")
         return
     ss.setdefault("g_node", tree.start)
     ss.setdefault("g_path", [])
@@ -34,7 +34,7 @@ def page(ctx: Ctx) -> None:
     elif node in tree.actions:
         _action(ctx, tree.actions[node])
     else:
-        st.error(f"The tree points to '{node}', which isn't a question or an action. Fix it on the Edit page.")
+        st.error(f"The tree points to '{node}', which isn't a question or an action. Fix it on the Manage page.")
 
     if ss.g_path:
         st.write("")
@@ -88,7 +88,7 @@ def _action(ctx: Ctx, action: logic.Action) -> None:
         if st.button("Did it", type="primary", icon=":material/check:", width="stretch", key="g_did"):
             log_checkin(ctx, path, pick.name, "Did it")
             _reset()
-            if pick.measure != "Check" or pick.variants:  # ask for reps/time/variant
+            if pick.inputs or pick.variants:  # ask for reps/time/variant
                 log_view.open_dialog(ctx, pick.name, scope=[pick.id])
                 return
             log_item(ctx, pick, "Guide")

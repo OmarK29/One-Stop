@@ -10,7 +10,7 @@ import streamlit as st
 
 import logic
 import store
-from views import edit, guide, me, progress, setup, timers, today, track
+from views import edit, guide, me, progress, setup, timers, today, track, workout
 from views.common import Ctx
 
 CSS = """
@@ -103,23 +103,25 @@ def main() -> None:
 
     settings = s.settings()
     ctx = Ctx(store=s, clock=logic.Clock.from_settings(settings), settings=settings, cloud=cloud)
+    logic.set_units(settings)
     if ctx.display("layout", "Comfortable") == "Compact":
         st.markdown(COMPACT_CSS, unsafe_allow_html=True)
     if ctx.display("text", "Normal") == "Large":
         st.markdown(LARGE_TEXT_CSS, unsafe_allow_html=True)
 
-    start = {"Log": "Track", "Trackers": "Track"}.get(ctx.display("start_page", "Guide me"),
+    start = {"Log": "Track", "Trackers": "Track", "Edit": "Manage"}.get(ctx.display("start_page", "Guide me"),
                                                        ctx.display("start_page", "Guide me"))
     main_pages = [
         ("Guide me", guide.page, ":material/explore:", "guide"),
         ("Today", today.page, ":material/checklist:", "today"),
         ("Track", track.page, ":material/calendar_view_week:", "track"),
+        ("Workout", workout.page, ":material/fitness_center:", "workout"),
         ("Timers", timers.page, ":material/timer:", "timers"),
         ("Me", me.page, ":material/person:", "me"),
     ]
     more_pages = [
         ("Progress", progress.page, ":material/insights:", "progress"),
-        ("Edit", edit.page, ":material/edit_note:", "edit"),
+        ("Manage", edit.page, ":material/tune:", "manage"),
     ]
     if start not in [t for t, *_ in main_pages + more_pages]:
         start = "Guide me"
@@ -129,15 +131,18 @@ def main() -> None:
         return ctx.pages[path]
 
     nav = {"": [make(*p) for p in main_pages], "More": [make(*p) for p in more_pages]}
-    # Old links (and Home Screen icons) to Log and Trackers open Track, keeping ?t=
-    for old, view in (("log", {}), ("trackers", {"v": "Trackers"})):
-        nav["More"].append(st.Page(lambda view=view: st.switch_page(ctx.pages["track"],
-                                                                     query_params=dict(st.query_params) | view),
-                                   title=old.title(), url_path=old, visibility="hidden"))
+    # Old links (and Home Screen icons) keep working: Log and Trackers open Track (keeping ?t=), Edit opens Manage
+    for old, to, view in (("log", "track", {}), ("trackers", "track", {"v": "Trackers"}), ("edit", "manage", {})):
+        nav["More"].append(st.Page(lambda to=to, view=view: st.switch_page(
+            ctx.pages[to], query_params=dict(st.query_params) | view), title=old.title(), url_path=old,
+            visibility="hidden"))
     if not cloud:
         nav["More"].append(st.Page(lambda: setup.page(True), title="Setup", icon=":material/settings:",
                                    url_path="setup"))
-    st.navigation(nav, position="top").run()
+    current = st.navigation(nav, position="top")
+    if current.url_path != "workout":
+        workout.banner(ctx)
+    current.run()
 
 
 if __name__ == "__main__":

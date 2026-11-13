@@ -71,6 +71,8 @@ def page(ctx: Ctx) -> None:
             n = counts.get(it.id, 0)
             st.progress(min(1.0, n / it.target), text=f"{it.name} · {logic.fmt_amount(n, it.unit)}/{it.target}")
 
+    if "Month in review" in show:
+        _month(ctx, items, log)
     if "Sleep & screen time" in show:
         _numbers(ctx, log)
     _skills(ctx, items, log, show)
@@ -96,8 +98,32 @@ def page(ctx: Ctx) -> None:
     refresh_button(ctx, "progress_refresh")
 
 
-SECTIONS = ["XP by day", "This week", "Sleep & screen time", "Skills", "Weekly volume", "Progressions", "Noticed",
+SECTIONS = ["XP by day", "This week", "Month in review", "Sleep & screen time", "Skills", "Weekly volume", "Progressions", "Noticed",
             "Check-ins"]
+
+
+def _month(ctx: Ctx, items: list[logic.Item], log) -> None:
+    """This month or last: totals, new bests, workouts, ladder starts and your most-logged skills. No streaks."""
+    st.markdown("#### Month in review")
+    which = st.segmented_control("Month", ["This month", "Last month"], default="This month", required=True,
+                                 key="pm", label_visibility="collapsed")
+    start, end, label = logic.period_range(ctx.clock, "Month", 0 if which == "This month" else -1)
+    frame = logic.log_frame(log, ctx.clock)
+    r = logic.month_report(items, frame, log, ctx.clock, start, end)
+    if not r["logs"]:
+        st.caption(f"Nothing logged in {label} yet.")
+        return
+    row = st.container(horizontal=True, wrap=True)
+    for name, value in (("Days active", r["days"]), ("Logs", r["logs"]), ("Reps", f"{r['reps']:,}"),
+                        ("Minutes", f"{r['minutes']:,}"), ("Workouts", r["workouts"]),
+                        ("Ladder starts", r["ladder_starts"])):
+        row.metric(name, value, width=130)
+    if r["distance"]:
+        st.caption(f"Distance: {r['distance']:g} {logic.DIST_UNIT}")
+    if r["bests"]:
+        st.markdown("**New bests** 🏆\n" + "\n".join(f"- {b}" for b in r["bests"][:12]))
+    if r["top"]:
+        st.caption("Most logged: " + " · ".join(f"{n} ({c})" for n, c in r["top"]))
 
 
 def _numbers(ctx: Ctx, log) -> None:
@@ -183,7 +209,7 @@ def _volume(ctx: Ctx, h: logic.Hierarchy, t_all, frame) -> None:
                         format_func=lambda i: " · ".join(b for b in (h.items[i].name, h.path(i)) if b))
     if pick:
         vol = logic.weekly_volume(h, pick, frame, ctx.clock, weeks=12)
-        metrics = [m for m in ("Reps", "Minutes", "Logs") if m == "Logs" or vol[m].sum()]
+        metrics = [m for m in ("Reps", "Minutes", "Distance", "Volume", "Logs") if m == "Logs" or vol[m].sum()]
         metric = st.segmented_control("Measure", metrics, default=metrics[0], key="pv_metric",
                                       label_visibility="collapsed") or metrics[0]
         if not vol[metric].sum():
@@ -192,7 +218,9 @@ def _volume(ctx: Ctx, h: logic.Hierarchy, t_all, frame) -> None:
             chart = (alt.Chart(vol).mark_bar(cornerRadiusTopLeft=4, cornerRadiusTopRight=4, size=14,
                                              color=DOMAIN_COLORS["Physical"])
                      .encode(x=alt.X("Week:T", title=None, axis=alt.Axis(format="%-m/%-d", grid=False)),
-                             y=alt.Y(f"{metric}:Q", title=metric, axis=alt.Axis(tickCount=4)),
+                             y=alt.Y(f"{metric}:Q", title={"Distance": f"Distance ({logic.DIST_UNIT})",
+                                                           "Volume": f"Reps × weight ({logic.WEIGHT_UNIT})"}
+                                     .get(metric, metric), axis=alt.Axis(tickCount=4)),
                              tooltip=[alt.Tooltip("Week:T", title="Week of", format="%b %-d"),
                                       alt.Tooltip(f"{metric}:Q")])
                      .properties(height=200))

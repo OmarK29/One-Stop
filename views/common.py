@@ -40,6 +40,23 @@ class Ctx:
         except Exception:  # the tab is new; a sheet that hasn't been upgraded yet just has no timers
             return []
 
+    def boards(self) -> dict[str, list[dict]]:
+        """Board name -> its timers (Label, Mode, Length, Item, Options), in sheet order."""
+        try:
+            df = self.store.read("Boards")
+        except Exception:  # the tab is new; a sheet that hasn't been upgraded yet just has none
+            return {}
+        out: dict[str, list[dict]] = {}
+        for r in df.to_dict("records"):
+            name = str(r.get("Board", "")).strip()
+            mode = logic.pick(logic.TIMER_MODES, r.get("Mode"), "Stopwatch")
+            if name:
+                out.setdefault(name, []).append({
+                    "Label": str(r.get("Label", "")).strip() or mode, "Mode": mode,
+                    "Length": max(0, logic.to_int(r.get("Length"), 0)), "Item": str(r.get("Item", "") or "").strip(),
+                    "Options": str(r.get("Options", "") or "").strip()})
+        return out
+
     def ladders(self) -> dict[str, list[logic.Rung]]:
         try:
             df = self.store.read("Ladders")
@@ -84,17 +101,79 @@ TODAY_SECTIONS = ["Pet", "Timers", "Priorities", "Sleep & screen time", "Skills"
 
 
 def log_item(ctx: Ctx, item: logic.Item, source: str, note: str = "", reps: int = 0, secs: int = 0,
-             variant: str = "", day=None) -> None:
-    """Append one log row. `day` lets a tracker cell log for an earlier day this week."""
+             variant: str = "", day=None, weight: float = 0, dist: float = 0, effort: int = 0, set_no: int = 0,
+             session: str = "", xp: int | None = None, frame=None, check_bests: bool = True) -> list[str]:
+    """Append one log row. `day` logs for an earlier day; `set_no`/`session` mark a set in a workout.
+    Returns any new personal bests (and toasts them)."""
     day = day or ctx.clock.today()
-    ctx.store.append("Log", [ctx.clock.stamp(), day.isoformat(), item.id, item.name, item.domain, item.kind,
-                             item.xp if item.good else 0, source, note, reps or "", secs or "", variant])
-    amount = logic.fmt_totals(logic.Totals(1, reps or 0, secs or 0))
-    what = " · ".join(b for b in (item.name, variant, amount if amount != "✓" else "") if b)
+    if frame is None:
+        frame = logic.log_frame(ctx.log(), ctx.clock)
+    hits = logic.new_bests(logic.bests(frame, item.id), {"reps": reps, "secs": secs, "weight": weight,
+                                                         "dist": dist}) if check_bests else []
+    earned = (item.xp if xp is None else xp) if item.good else 0
+    ctx.store.append_dicts("Log", [{
+        "Timestamp": ctx.clock.stamp(), "Day": day.isoformat(), "Item ID": item.id, "Item": item.name,
+        "Domain": item.domain, "Kind": item.kind, "XP": earned, "Source": source, "Note": note, "Reps": reps or "",
+        "Seconds": secs or "", "Variant": variant, "Weight": weight or "", "Distance": dist or "",
+        "Effort": effort or "", "Set": set_no or "", "Session": session}])
+    what = " · ".join(b for b in (item.name, variant, logic.fmt_set(
+        {"reps": reps, "secs": secs, "weight": weight, "dist": dist})) if b and b != "✓")
+    if hits:
+        st.toast(f"New best · {item.name}: {', '.join(hits)}", icon="🏆")
     if item.good:
-        st.toast(f"+{item.xp} XP · {what}", icon="✅")
+        st.toast((f"+{earned} XP · " if earned else "") + (f"Set {set_no} · " if set_no else "") + what, icon="✅")
     else:
         st.toast(f"Noted: {item.name}. No XP lost.", icon="📝")
+    return hits
+
+
+def add_variant(ctx: Ctx, item: logic.Item, variant: str) -> str:
+    """Add a variant to an item right where you are (in the gym, mid-set). Returns the name as saved."""
+    variant = variant.strip().replace(",", " /")
+    known = {v.lower(): v for v in item.variants}
+    if not variant or variant.lower() in known:
+        return known.get(variant.lower(), variant)
+    df = ctx.store.read("Items", fresh=True)
+    match = df[df["ID"].astype(str).str.strip() == item.id]
+    if not match.empty:
+        ctx.store.update_row("Items", int(match["_row"].iloc[0]), {"Variants": ", ".join(item.variants + [variant])})
+        item.variants.append(variant)
+        st.toast(f"Added {variant} to {item.name}", icon="➕")
+    return variant
+
+
+def add_skill(ctx: Ctx, name: str, parents: list[str], inputs: list[str], sets: bool,
+              variants: list[str] | None = None) -> str | None:
+    """A new skill from wherever you are. Returns its ID, or None (with a message) if the name won't work."""
+    name = name.strip()
+    items = ctx.items()
+    if not name:
+        st.error("Give it a name.")
+        return None
+    if "," in name or ";" in name:
+        st.error("Names can't contain commas or semicolons. Try / or &.")
+        return None
+    if any(it.name.lower() == name.lower() for it in items):
+        st.error(f"There's already something called {name}.")
+        return None
+    df = ctx.store.read("Items", fresh=True)
+    nums = [logic.to_int(str(i).strip()[1:], 0) for i in df["ID"] if str(i).strip().startswith("I")]
+    iid = f"I{max(nums, default=0) + 1:03d}"
+    ctx.store.append_dicts("Items", [{
+        "ID": iid, "Item": name, "Kind": "Good", "Period": "Weekly", "Target": 0, "XP": 5, "Active": True,
+        "Block": "Anytime", "Parents": ", ".join(parents), "Measure": logic.measure_of(inputs),
+        "Variants": ", ".join(variants or []), "Pinned": False, "Inputs": logic.inputs_text(inputs, sets)}])
+    st.toast(f"Added {name}", icon="➕")
+    return iid
+
+
+def timer_history(ctx: Ctx, t: logic.Timer, outcome: str, secs: int = 0, reps: int = 0) -> None:
+    try:
+        ctx.store.append_dicts("Timer history", [{"Timestamp": ctx.clock.stamp(), "Label": t.label, "Mode": t.mode,
+                                                  "Seconds": secs, "Reps": reps, "Outcome": outcome,
+                                                  "Board": t.board}])
+    except Exception:  # history is nice to have; never block a log on it
+        pass
 
 
 def log_checkin(ctx: Ctx, path: str, recommended: str, outcome: str) -> None:
@@ -126,9 +205,14 @@ def set_daily_number(ctx: Ctx, num: logic.DailyNumber, day, minutes: int) -> Non
              icon="✅" if num.met(minutes) else "📝")
 
 
-def start_timer(ctx: Ctx, item: logic.Item | None, mode: str, length: int = 0) -> None:
-    ctx.store.append("Timers", [_next_timer_id(ctx), item.id if item else "", item.name if item else mode, mode,
-                                length, "" if mode == "Counter" else round(time.time(), 1), 0, 0, ctx.clock.stamp()])
+def start_timer(ctx: Ctx, item: logic.Item | None, mode: str, length: int = 0, options: str = "",
+                board: str = "", label: str = "") -> None:
+    opts = logic.timer_options(options)
+    delay = opts.get("delay", 0) if isinstance(opts.get("delay"), int) else 0
+    ctx.store.append_dicts("Timers", [{
+        "ID": _next_timer_id(ctx), "Item ID": item.id if item else "", "Label": label or (item.name if item else mode),
+        "Mode": mode, "Length": length, "Started": "" if mode == "Counter" else round(time.time() + delay, 1),
+        "Elapsed": 0, "Reps": 0, "Created": ctx.clock.stamp(), "Options": options, "Board": board}])
 
 
 def start_ladder(ctx: Ctx, name: str, index: int = 0) -> None:
