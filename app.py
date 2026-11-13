@@ -27,6 +27,7 @@ CSS = """
 .stat-line b { font-size: 1.25rem; }
 .rep-count { font-size: 2.4rem; font-weight: 700; font-variant-numeric: tabular-nums; line-height: 1.1; }
 .rep-count span { font-size: 1rem; font-weight: 500; opacity: .6; }
+.ladder-do { font-size: 1.7rem; font-weight: 700; line-height: 1.2; margin: .2rem 0 .3rem; }
 .me-name { font-size: 1.2rem; font-weight: 700; text-align: center; }
 .me-sub { text-align: center; opacity: .7; margin-bottom: .6rem; }
 </style>

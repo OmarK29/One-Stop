@@ -19,8 +19,10 @@ CC = st.column_config
 def page(ctx: Ctx) -> None:
     st.subheader("Edit")
     st.caption("Changes save to your Google Sheet. You can also edit the sheet directly, then tap Refresh.")
-    t_skill, t_items, t_trackers, t_tree, t_settings = st.tabs(
-        ["Skills", "All items (table)", "Trackers", "Guide me tree", "Settings"])
+    t_skill, t_items, t_trackers, t_ladders, t_tree, t_settings = st.tabs(
+        ["Skills", "All items (table)", "Trackers", "Ladders", "Guide me tree", "Settings"])
+    with t_ladders:
+        _ladders(ctx)
     with t_skill:
         _skill_editor(ctx)
     with t_items:
@@ -148,6 +150,35 @@ def _trackers(ctx: Ctx) -> None:
     _save(ctx, "Trackers", edited, "ed_tr")
 
 
+def _ladders(ctx: Ctx) -> None:
+    st.markdown("An **ease ladder** is a goal, then easier and easier ways to start it. Rows with the same "
+                "**Ladder** name are one ladder; **Step** 1 is the real goal and higher steps are easier. "
+                "**Minutes** is how long you get to start a step before it drops to the next one (blank = the "
+                "default in Settings). **Logs as** is an optional skill: starting that step times or logs it.")
+    try:
+        df = ctx.store.read("Ladders")
+    except Exception:
+        st.info("The Ladders tab appears the next time the app restarts.")
+        return
+    view = _editor_df(df, ["Ladder", "Step", "Do", "Minutes", "Logs as"])
+    for col in ("Step", "Minutes"):
+        view[col] = pd.to_numeric(view[col], errors="coerce")
+    edited = st.data_editor(
+        view, key="ed_ld", num_rows="dynamic",
+        hide_index=True, width="stretch",
+        column_config={"Ladder": CC.TextColumn(required=True, width="small"),
+                       "Step": CC.NumberColumn(min_value=1, max_value=50, step=1, width="small"),
+                       "Do": CC.TextColumn(required=True, width="large"),
+                       "Minutes": CC.NumberColumn(min_value=1, max_value=240, step=1, width="small"),
+                       "Logs as": CC.TextColumn(width="medium", help="An item or umbrella name (optional)")})
+    h = logic.build_hierarchy(ctx.items())
+    issues = [f"Ladder '{n}', step '{r.do}': there's no item called '{r.logs_as}'."
+              for n, rungs in ctx.ladders().items() for r in rungs if r.logs_as and h.find(r.logs_as) is None]
+    if issues:
+        st.warning("\n".join(f"- {i}" for i in issues))
+    _save(ctx, "Ladders", edited, "ed_ld")
+
+
 def _tree(ctx: Ctx) -> None:
     q = ctx.store.read("Questions")
     a = ctx.store.read("Actions")
@@ -215,6 +246,10 @@ def _settings(ctx: Ctx) -> None:
         sections = st.multiselect("Show on Today", TODAY_SECTIONS,
                                   default=[x for x in ctx.today_sections() if x in TODAY_SECTIONS])
 
+        ladder_min = st.number_input("Ease ladders: minutes to start each step", 1, 120,
+                                     logic.to_int(s.get("ladder_minutes"), 5),
+                                     help="Used when a step's Minutes is blank. Change one ladder on Edit → Ladders.")
+
         st.markdown("##### Sleep and screen time")
         c1, c2 = st.columns(2)
         track_sleep = c1.toggle("Track sleep", value=logic.to_bool(s.get("track_sleep"), True))
@@ -240,7 +275,7 @@ def _settings(ctx: Ctx) -> None:
         if st.form_submit_button("Save settings", type="primary"):
             new = dict(s)
             new.update({"timezone": tz, "day_starts_at_hour": int(start), "week_starts_on": week,
-                        "xp_per_level": int(per_level),
+                        "xp_per_level": int(per_level), "ladder_minutes": int(ladder_min),
                         "display_start_page": start_page, "display_layout": layout, "display_text": text,
                         "display_today": ", ".join(sections) or "none",
                         "track_sleep": track_sleep, "sleep_goal_hours": sleep,

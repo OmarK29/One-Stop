@@ -188,6 +188,7 @@ SETTINGS = [
     ["sleep_goal_hours", 7.5],
     ["screen_time_limit_hours", 2],
     ["pet_name", "Pip"],
+    ["ladder_minutes", 5],
 ]
 
 # Printed-style weekly grids. Maps to = skills or umbrellas (comma-separated); Show = Auto, Reps, Time or Count.
@@ -213,6 +214,24 @@ _TRACKERS = {
 }
 TRACKERS = [[t, col, maps, "Auto"] for t, cols in _TRACKERS.items() for col, maps in cols]
 
+# Ease ladders: a goal, then easier and easier ways to start it. You get Minutes to start each step;
+# if you haven't, the app drops you one step down. Step 1 is the real goal. Logs as = a skill to log or time.
+LADDERS_HEADER = ["Ladder", "Step", "Do", "Minutes", "Logs as"]
+LADDERS = [
+    ["Run an hour", 1, "Run for an hour", 10, "Run (half-marathon training)"],
+    ["Run an hour", 2, "Treadmill or elliptical for 30 minutes", 10, "Elliptical"],
+    ["Run an hour", 3, "Just get on the treadmill or elliptical", 5, "Elliptical"],
+    ["Run an hour", 4, "Go downstairs", 5, ""],
+    ["Run an hour", 5, "Change into workout clothes", 5, ""],
+    ["Run an hour", 6, "Do 5 air squats", 5, "Squat"],
+    ["Run an hour", 7, "Stand up for 5 minutes", 5, ""],
+    ["Anything", 1, "Do the whole thing", 5, ""],
+    ["Anything", 2, "Do just 5 minutes of it", 5, ""],
+    ["Anything", 3, "Get it out and set it up", 5, ""],
+    ["Anything", 4, "Go to where it happens", 5, ""],
+    ["Anything", 5, "Stand up and take three slow breaths", 5, ""],
+]
+
 # Running timers and counters, so they survive a closed tab and show on every device.
 # Started = when it was last started (Unix seconds), blank while paused; Elapsed = seconds banked before that.
 TIMERS_HEADER = ["ID", "Item ID", "Label", "Mode", "Length", "Started", "Elapsed", "Reps", "Created"]
@@ -226,4 +245,5 @@ TABS = {
     "Checkins": (CHECKINS_HEADER, []),
     "Settings": (SETTINGS_HEADER, SETTINGS),
     "Timers": (TIMERS_HEADER, []),
+    "Ladders": (LADDERS_HEADER, LADDERS),
 }

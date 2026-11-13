@@ -39,6 +39,13 @@ class Ctx:
         except Exception:  # the tab is new; a sheet that hasn't been upgraded yet just has no timers
             return []
 
+    def ladders(self) -> dict[str, list[logic.Rung]]:
+        try:
+            df = self.store.read("Ladders")
+        except Exception:  # the tab is new; a sheet that hasn't been upgraded yet just has none
+            return {}
+        return logic.parse_ladders(df, logic.to_int(self.settings.get("ladder_minutes"), 5))
+
     def display(self, key: str, default: str) -> str:
         return str(self.settings.get(f"display_{key}") or default).strip()
 
@@ -95,10 +102,25 @@ def set_daily_number(ctx: Ctx, num: logic.DailyNumber, day, minutes: int) -> Non
 
 
 def start_timer(ctx: Ctx, item: logic.Item | None, mode: str, length: int = 0) -> None:
+    ctx.store.append("Timers", [_next_timer_id(ctx), item.id if item else "", item.name if item else mode, mode,
+                                length, "" if mode == "Counter" else round(time.time(), 1), 0, 0, ctx.clock.stamp()])
+
+
+def start_ladder(ctx: Ctx, name: str, index: int = 0) -> None:
+    """One ladder at a time: starting another replaces the one running."""
+    for t in ctx.timers():
+        if t.mode == logic.LADDER_MODE:
+            fresh = ctx.store.read("Timers", fresh=True)
+            match = fresh[fresh["ID"].astype(str).str.strip() == t.id]
+            if not match.empty:
+                ctx.store.delete_row("Timers", int(match["_row"].iloc[0]))
+    ctx.store.append("Timers", [_next_timer_id(ctx), "", name, logic.LADDER_MODE, 0, round(time.time(), 1), 0, index,
+                                ctx.clock.stamp()])
+
+
+def _next_timer_id(ctx: Ctx) -> str:
     ids = [t.id for t in ctx.timers()]
-    n = max([logic.to_int(i[1:], 0) for i in ids if i.startswith("T")], default=0) + 1
-    ctx.store.append("Timers", [f"T{n:03d}", item.id if item else "", item.name if item else mode, mode, length,
-                                "" if mode == "Counter" else round(time.time(), 1), 0, 0, ctx.clock.stamp()])
+    return f"T{max([logic.to_int(i[1:], 0) for i in ids if i.startswith('T')], default=0) + 1:03d}"
 
 
 def dark() -> bool:

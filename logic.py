@@ -856,6 +856,7 @@ def fmt_hm(minutes: int | float) -> str:
 # ---------- timers ----------
 
 TIMER_MODES = ["Stopwatch", "Countdown", "Counter"]
+LADDER_MODE = "Ladder"  # an ease ladder run, kept in the Timers tab: Label = ladder, Reps = step index
 
 
 @dataclass
@@ -896,7 +897,7 @@ def parse_timers(df: pd.DataFrame) -> list[Timer]:
             continue
         started = str(r.get("Started", "")).strip()
         out.append(Timer(id=tid, item_id=str(r.get("Item ID", "")).strip(), label=str(r.get("Label", "")).strip(),
-                         mode=pick(TIMER_MODES, r.get("Mode"), "Stopwatch"), length=max(0, to_int(r.get("Length"), 0)),
+                         mode=pick(TIMER_MODES + [LADDER_MODE], r.get("Mode"), "Stopwatch"), length=max(0, to_int(r.get("Length"), 0)),
                          started=to_float(started) if started else None,
                          elapsed=max(0.0, to_float(r.get("Elapsed"), 0.0)), reps=max(0, to_int(r.get("Reps"), 0)),
                          row=to_int(r.get("_row"), 0)))
@@ -948,7 +949,8 @@ class Stat:
 
 def stats(items: list[Item], log_df: pd.DataFrame, clock: Clock, settings: dict) -> list[Stat]:
     """Each stat's points are the XP of the logs that feed it. One log can feed several stats."""
-    by_id = {it.id: it for it in items} | {n.item_id: n.as_item() for n in daily_numbers(settings)}
+    by_id = ({it.id: it for it in items} | {n.item_id: n.as_item() for n in daily_numbers(settings)}
+             | {LADDER_ID: ladder_item()})
     sources = {s: split_list(v) for s, v in stat_sources(settings).items()}
     feeds = {iid: [s for s, toks in sources.items() if any(token_matches(it, t) for t in toks)]
              for iid, it in by_id.items()}
@@ -1095,3 +1097,69 @@ def stat_days(items: list[Item], frame: pd.DataFrame, settings: dict, stat: str,
     ids = {it.id for it in items if any(token_matches(it, t) for t in toks)}
     f = frame[frame["id"].isin(ids) & (frame["day"] >= start) & (frame["day"] <= end)] if not frame.empty else frame
     return int(f["day"].nunique()) if not f.empty else 0
+
+
+# ---------- ease ladders ----------
+
+LADDER_ID = "LADDER"  # Log rows for starting a ladder step; there's no Items row for these
+LADDER_XP = 5
+
+
+@dataclass
+class Rung:
+    ladder: str
+    step: int
+    do: str
+    minutes: int  # time to start this step before dropping to the next one
+    logs_as: str  # item name, or ""
+
+
+def parse_ladders(df: pd.DataFrame, default_minutes: int = 5) -> dict[str, list[Rung]]:
+    """Ladder name -> its steps, the real goal first and the easiest last."""
+    out: dict[str, list[Rung]] = {}
+    for pos, r in enumerate(df.to_dict("records")):
+        name, do = str(r.get("Ladder", "")).strip(), str(r.get("Do", "")).strip()
+        if not name or not do:
+            continue
+        out.setdefault(name, []).append(Rung(name, to_int(r.get("Step"), 1000 + pos), do,
+                                             max(1, to_int(r.get("Minutes"), default_minutes)),
+                                             str(r.get("Logs as", "") or "").strip()))
+    for rungs in out.values():
+        rungs.sort(key=lambda g: g.step)
+    return out
+
+
+@dataclass
+class LadderSpot:
+    index: int  # which step you're on now
+    into: float  # seconds into its window
+    window: int  # seconds you get to start it
+    ran_out: bool  # the easiest step's window has passed too
+
+
+def ladder_spot(rungs: list[Rung], index: int, started: float, now: float) -> LadderSpot:
+    """Where a run is now. Each step's window that passes without a start drops you one step."""
+    i, t = max(0, min(index, len(rungs) - 1)), max(0.0, now - started)
+    while t >= rungs[i].minutes * 60:
+        if i == len(rungs) - 1:
+            return LadderSpot(i, rungs[i].minutes * 60, rungs[i].minutes * 60, True)
+        t -= rungs[i].minutes * 60
+        i += 1
+    return LadderSpot(i, t, rungs[i].minutes * 60, False)
+
+
+def ladder_item() -> Item:
+    """Starting counts: it feeds Mind, and the pet notices."""
+    return Item(id=LADDER_ID, name="Started a ladder step", domain="Mental", kind="Good", period="Daily", target=0,
+                xp=LADDER_XP, priority="Normal", block="", tags=[], counters=[], active=True, notes="", row=10**6,
+                pinned=False)
+
+
+def ladders_for(ladders: dict[str, list[Rung]], h: Hierarchy, item_id: str) -> list[str]:
+    """Ladders with a step that logs as this item, or as an umbrella above it."""
+    targets = {item_id, *h.ancestors(item_id)}
+    out = []
+    for name, rungs in ladders.items():
+        if any((it := h.find(r.logs_as)) and it.id in targets for r in rungs if r.logs_as):
+            out.append(name)
+    return out

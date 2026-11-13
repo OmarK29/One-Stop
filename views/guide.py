@@ -4,6 +4,7 @@ from __future__ import annotations
 import streamlit as st
 
 import logic
+from views import ladder
 from views import log as log_view
 from views.common import DOMAIN_ICON, Ctx, log_checkin, log_item
 
@@ -93,6 +94,7 @@ def _action(ctx: Ctx, action: logic.Action) -> None:
             log_item(ctx, pick, "Guide")
             st.rerun()
 
+    ladder.offer(ctx, logic.build_hierarchy(items), pick, key="g_ladder")
     c1, c2 = st.columns(2)
     if len(ranked) > 1 and c1.button(f"Another option ({len(ranked) - 1} more)", width="stretch", key="g_another"):
         ss.g_offset += 1

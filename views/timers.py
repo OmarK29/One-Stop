@@ -42,7 +42,10 @@ export default function(component) {
       const left = data.length - s;
       el.textContent = left > 0 ? fmt(Math.ceil(left)) : 'Done';
       el.classList.toggle('done', left <= 0);
-      if (left <= 0 && !beeped && data.running) { beeped = true; beep(); }
+      if (left <= 0 && !beeped && data.running) {
+        beeped = true; beep();
+        if (data.notify) component.setTriggerValue('expired', true);
+      }
     } else {
       el.textContent = fmt(s);
     }
@@ -71,11 +74,21 @@ def clock(t: logic.Timer, small: bool = False) -> None:
            key=f"clk_{t.id}_{t.started}_{t.elapsed}_{int(small)}")
 
 
+def countdown(key: str, into: float, window: int, small: bool = False) -> None:
+    """Counts down a ladder step's window, beeps at zero, then reruns the page so the next step shows."""
+    _clock(data={"secs": into, "running": True, "mode": "Countdown", "length": window, "finished": False,
+                 "small": small, "notify": True},
+           key=f"cd_{key}_{int(window)}_{int(into)}_{int(small)}", on_expired_change=lambda: None)
+
+
 def page(ctx: Ctx) -> None:
+    from views import ladder  # ladder imports this module for its clock
+
     st.subheader("Timers")
     h = logic.build_hierarchy(ctx.items())
+    ladder.section(ctx, h)
     _new(ctx, h)
-    timers = ctx.timers()
+    timers = [t for t in ctx.timers() if t.mode != logic.LADDER_MODE]
     if not timers:
         st.caption("No timers running. Start as many as you like; they keep going with the app closed.")
     for t in timers:
@@ -84,7 +97,8 @@ def page(ctx: Ctx) -> None:
 
 def _new(ctx: Ctx, h: logic.Hierarchy) -> None:
     pool = [it.id for it in sorted(h.items.values(), key=lambda it: it.row) if it.active and it.good]
-    with st.expander("New timer or counter", icon=":material/add_alarm:", expanded=not ctx.timers()):
+    with st.expander("New timer or counter", icon=":material/add_alarm:",
+                     expanded=not any(t.mode != logic.LADDER_MODE for t in ctx.timers())):
         iid = st.selectbox("Skill (optional)", pool, index=None, key="tm_item", placeholder="Just a timer",
                            format_func=lambda i: " · ".join(b for b in (h.items[i].name, h.path(i)) if b))
         item = h.items.get(iid) if iid else None
@@ -207,6 +221,10 @@ def strip(ctx: Ctx) -> None:
     with st.container(border=True, gap=None):
         for t in timers:
             row = st.container(horizontal=True, wrap=False, vertical_alignment="center")
+            if t.mode == logic.LADDER_MODE:
+                from views import ladder
+                ladder.strip_line(ctx, t, row)
+                continue
             name = h_items[t.item_id].name if t.item_id in h_items else t.label
             row.markdown(f"**{name}**" + (f" · {st.session_state.get(f'tm_reps_{t.id}', t.reps)} reps"
                                            if t.mode == "Counter" else ""))
