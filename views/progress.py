@@ -8,7 +8,7 @@ import pandas as pd
 import streamlit as st
 
 import logic
-from views.common import Ctx, refresh_button
+from views.common import Ctx, refresh_button, show_menu
 
 # Categorical slots 1–3 of the validated reference palette (pass all-pairs CVD checks).
 DOMAIN_COLORS = {"Physical": "#2a78d6", "Mental": "#eb6834", "Spiritual": "#1baf7a"}
@@ -19,19 +19,24 @@ def page(ctx: Ctx) -> None:
     log = ctx.log()
     xp = logic.xp_summary(log, ctx.clock, ctx.per_level)
 
-    st.subheader("Progress")
+    head = st.container(horizontal=True, vertical_alignment="center")
+    head.subheader("Progress")
+    show = show_menu(ctx, "progress", SECTIONS, where=head)
     st.markdown(f"<div class='hero-xp'>{xp.total:,}<span> XP</span></div>", unsafe_allow_html=True)
     st.progress(xp.into_level / xp.per_level,
                 text=f"Level {xp.level} · {xp.per_level - xp.into_level} XP to level {xp.level + 1}")
     st.markdown(f"<div class='stat-line'><b>{xp.today}</b> XP today · <b>{xp.week}</b> this week</div>",
                 unsafe_allow_html=True)
 
-    st.markdown("#### XP by day")
     daily = logic.daily_frame(log, ctx.clock, days=14)
     good = daily[daily["Kind"] == "Good"] if not daily.empty else daily
-    if good.empty:
+    if "XP by day" not in show:
+        pass
+    elif good.empty:
+        st.markdown("#### XP by day")
         st.caption("Log something on Today or Guide me and it shows up here.")
     else:
+        st.markdown("#### XP by day")
         chart = (alt.Chart(good).mark_bar(cornerRadiusTopLeft=3, cornerRadiusTopRight=3, size=14)
                  .encode(x=alt.X("yearmonthdate(Day):T", title=None, axis=alt.Axis(format="%-m/%-d", grid=False)),
                          y=alt.Y("sum(XP):Q", title="XP", axis=alt.Axis(tickCount=4)),
@@ -52,24 +57,26 @@ def page(ctx: Ctx) -> None:
     today = ctx.clock.today()
     week0 = ctx.clock.week_start(today)
     week = daily[daily["Day"] >= pd.Timestamp(week0)] if not daily.empty else daily
-    st.markdown("#### This week")
-    parts = []
-    for dom in logic.DOMAINS:
-        val = int(week[(week["Domain"] == dom) & (week["Kind"] == "Good")]["XP"].sum()) if not week.empty else 0
-        parts.append(f"{dom} <b>{val}</b>")
-    st.markdown(f"<div class='stat-line'>{' · '.join(parts)} XP</div>", unsafe_allow_html=True)
+    if "This week" in show:
+        st.markdown("#### This week")
+        parts = []
+        for dom in logic.DOMAINS:
+            val = int(week[(week["Domain"] == dom) & (week["Kind"] == "Good")]["XP"].sum()) if not week.empty else 0
+            parts.append(f"{dom} <b>{val}</b>")
+        st.markdown(f"<div class='stat-line'>{' · '.join(parts)} XP</div>", unsafe_allow_html=True)
 
-    counts = logic.period_counts(items, log, ctx.clock)
-    weekly = [it for it in items if it.active and it.good and it.period == "Weekly" and it.target and it.pinned]
-    for it in weekly:
-        n = counts.get(it.id, 0)
-        st.progress(min(1.0, n / it.target), text=f"{it.name} · {logic.fmt_amount(n, it.unit)}/{it.target}")
+        counts = logic.period_counts(items, log, ctx.clock)
+        weekly = [it for it in items if it.active and it.good and it.period == "Weekly" and it.target and it.pinned]
+        for it in weekly:
+            n = counts.get(it.id, 0)
+            st.progress(min(1.0, n / it.target), text=f"{it.name} · {logic.fmt_amount(n, it.unit)}/{it.target}")
 
-    _numbers(ctx, log)
-    _skills(ctx, items, log)
+    if "Sleep & screen time" in show:
+        _numbers(ctx, log)
+    _skills(ctx, items, log, show)
 
     noticed = week[week["Kind"] == "Unideal"] if not week.empty else week
-    if not noticed.empty:
+    if "Noticed" in show and not noticed.empty:
         st.markdown("#### Noticed this week")
         st.caption("For awareness only. These never cost XP.")
         week_log = log.copy()
@@ -79,7 +86,7 @@ def page(ctx: Ctx) -> None:
         summary = week_log.groupby("Item").size().sort_values(ascending=False).rename("Times")
         st.dataframe(summary, width="stretch")
 
-    checkins = ctx.store.read("Checkins")
+    checkins = ctx.store.read("Checkins") if "Check-ins" in show else pd.DataFrame()
     if not checkins.empty:
         st.markdown("#### Recent guide check-ins")
         recent = checkins.sort_values("_row", ascending=False).head(10)
@@ -87,6 +94,10 @@ def page(ctx: Ctx) -> None:
         st.dataframe(recent[["When", "Recommended", "Outcome", "Path"]], hide_index=True, width="stretch")
 
     refresh_button(ctx, "progress_refresh")
+
+
+SECTIONS = ["XP by day", "This week", "Sleep & screen time", "Skills", "Weekly volume", "Progressions", "Noticed",
+            "Check-ins"]
 
 
 def _numbers(ctx: Ctx, log) -> None:
@@ -122,20 +133,10 @@ def _numbers(ctx: Ctx, log) -> None:
         st.altair_chart((bars + rule).properties(height=160), width="stretch")
 
 
-def _walk(h: logic.Hierarchy, gid: str, depth: int = 0, trail: frozenset = frozenset()):
-    """(depth, id) for everything under an umbrella, depth-first. A skill under two umbrellas shows under both."""
-    for c in h.children.get(gid, []):
-        if c in trail or not h.items[c].active:
-            continue
-        yield depth, c
-        if h.items[c].group:
-            yield from _walk(h, c, depth + 1, trail | {gid})
-
-
-def _skills(ctx: Ctx, items: list[logic.Item], log) -> None:
+def _skills(ctx: Ctx, items: list[logic.Item], log, show: set[str]) -> None:
     """Umbrella tree with totals at each level, weekly volume for one skill, and progressions."""
     h = logic.build_hierarchy(items)
-    roots = [it for it in h.roots() if it.group and it.active]
+    roots = [it for it in h.skill_roots() if it.active]
     if not roots:
         return
     frame = logic.log_frame(log, ctx.clock)
@@ -144,13 +145,22 @@ def _skills(ctx: Ctx, items: list[logic.Item], log) -> None:
     t_week = logic.totals(h, frame, ctx.clock.week_start(today), today)
     t_all = logic.totals(h, frame)
 
+    if "Skills" in show:
+        _skill_tree(h, roots, t_day, t_week, t_all, frame)
+    if "Weekly volume" in show:
+        _volume(ctx, h, t_all, frame)
+    if "Progressions" in show:
+        _progressions(h, t_all, frame)
+
+
+def _skill_tree(h: logic.Hierarchy, roots, t_day, t_week, t_all, frame) -> None:
     st.markdown("#### Skills")
     domains = st.pills("Domain", logic.DOMAINS, selection_mode="multi", key="pd", bind="query-params",
                        label_visibility="collapsed")
     for g in [r for r in roots if not domains or r.domain in domains]:
         with st.expander(f"{g.name} · {logic.fmt_totals(t_week.get(g.id)) or 'nothing yet'} this week"):
             rows = []
-            for depth, iid in [(0, g.id)] + [(d + 1, i) for d, i in _walk(h, g.id)]:
+            for depth, iid in [(0, g.id)] + [(d + 1, i) for d, i in logic.walk(h, g.id)]:
                 it = h.items[iid]
                 rung = ""
                 if it.group and h.ladder(iid):
@@ -164,6 +174,8 @@ def _skills(ctx: Ctx, items: list[logic.Item], log) -> None:
                 table = table.drop(columns="Rung")
             st.dataframe(table, hide_index=True, width="stretch")
 
+
+def _volume(ctx: Ctx, h: logic.Hierarchy, t_all, frame) -> None:
     st.markdown("#### Weekly volume")
     options = [it.id for it in sorted(h.items.values(), key=lambda it: it.row)
                if it.active and (it.group or (it.good and t_all.get(it.id)))]
@@ -188,6 +200,8 @@ def _skills(ctx: Ctx, items: list[logic.Item], log) -> None:
             with st.expander("As a table"):
                 st.dataframe(vol.assign(Week=vol["Week"].dt.strftime("%b %-d")), hide_index=True, width="stretch")
 
+
+def _progressions(h: logic.Hierarchy, t_all, frame) -> None:
     ladders = [it for it in sorted(h.items.values(), key=lambda it: it.row) if it.group and it.active and h.ladder(it.id)]
     if ladders:
         st.markdown("#### Progressions")

@@ -10,7 +10,8 @@ from zoneinfo import ZoneInfo
 import pandas as pd
 
 DOMAINS = ["Physical", "Mental", "Spiritual"]
-KINDS = ["Good", "Unideal", "Group"]
+KINDS = ["Good", "Unideal", "Group", "Goal", "Identity"]
+GROUP_KINDS = ("Group", "Goal", "Identity")  # umbrellas: can't be logged, add up what's beneath
 PERIODS = ["Daily", "Weekly"]
 PRIORITIES = ["Floor", "High", "Normal", "Low"]
 MEASURES = ["Check", "Reps", "Time", "Both"]
@@ -121,7 +122,8 @@ class Item:
 
     @property
     def group(self) -> bool:
-        return self.kind == "Group"
+        """An umbrella of any kind: a skill group, a goal or an identity."""
+        return self.kind in GROUP_KINDS
 
     @property
     def prio_rank(self) -> int:
@@ -226,6 +228,11 @@ class Hierarchy:
     def roots(self) -> list[Item]:
         return [it for it in self.items.values() if not self.parents.get(it.id)]
 
+    def skill_roots(self) -> list[Item]:
+        """Top-level skill umbrellas (Movement, Hygiene…), not identities or goals."""
+        return [it for it in self.items.values() if it.kind == "Group"
+                and not any(self.items[p].kind == "Group" for p in self.parents.get(it.id, []))]
+
     def ladder(self, group_id: str) -> list[Item]:
         """The progression under an umbrella: children with a Step, easiest first."""
         rungs = [self.items[c] for c in self.children.get(group_id, []) if self.items[c].step]
@@ -238,12 +245,14 @@ class Hierarchy:
         return next((p for p in self.parents.get(iid, []) if self.ladder(p)), None)
 
     def path(self, iid: str) -> str:
-        """Movement › Hypertrophy › Squats, following first parents."""
-        names, seen, cur = [], {iid}, self.parents.get(iid, [])
+        """Movement › Hypertrophy › Squats, following first parents (skill umbrellas before goals)."""
+        def first(ps: list[str]) -> list[str]:
+            return sorted(ps, key=lambda p: self.items[p].kind != "Group")
+        names, seen, cur = [], {iid}, first(self.parents.get(iid, []))
         while cur and cur[0] not in seen:
             seen.add(cur[0])
             names.append(self.items[cur[0]].name)
-            cur = self.parents.get(cur[0], [])
+            cur = first(self.parents.get(cur[0], []))
         return " › ".join(reversed(names))
 
 
@@ -1163,3 +1172,53 @@ def ladders_for(ladders: dict[str, list[Rung]], h: Hierarchy, item_id: str) -> l
         if any((it := h.find(r.logs_as)) and it.id in targets for r in rungs if r.logs_as):
             out.append(name)
     return out
+
+
+# ---------- periods (Track page) ----------
+
+PERIODS_VIEW = ["Today", "Week", "Month", "Year"]
+
+
+def period_range(clock: Clock, period: str, offset: int = 0) -> tuple[dt.date, dt.date, str]:
+    """First day, last day and a label for the period `offset` steps back (negative) from now."""
+    today = clock.today()
+    if period == "Today":
+        d = today + dt.timedelta(days=offset)
+        return d, d, "Today" if offset == 0 else "Yesterday" if offset == -1 else d.strftime("%a %b %-d")
+    if period == "Week":
+        w = clock.week_start(today) + dt.timedelta(weeks=offset)
+        e = w + dt.timedelta(days=6)
+        return w, e, f"{w.strftime('%b %-d')} – {e.strftime('%b %-d' if e.month != w.month else '%-d')}"
+    if period == "Month":
+        y, m = divmod(today.year * 12 + today.month - 1 + offset, 12)
+        first = dt.date(y, m + 1, 1)
+        nxt = dt.date(y + (m + 1) // 12, (m + 1) % 12 + 1, 1)
+        return first, nxt - dt.timedelta(days=1), first.strftime("%B %Y")
+    y = today.year + offset
+    return dt.date(y, 1, 1), dt.date(y, 12, 31), str(y)
+
+
+def days_active(frame: pd.DataFrame, ids, start: dt.date, end: dt.date) -> int:
+    f = frame[frame["id"].isin(set(ids)) & (frame["day"] >= start) & (frame["day"] <= end)] if not frame.empty else frame
+    return int(f["day"].nunique()) if not f.empty else 0
+
+
+def activity(frame: pd.DataFrame, ids, start: dt.date, end: dt.date, by: str) -> list[int]:
+    """Logs per day (by='day') or per month (by='month') between start and end, for a sparkline."""
+    f = frame[frame["id"].isin(set(ids)) & (frame["day"] >= start) & (frame["day"] <= end)] if not frame.empty else frame
+    if by == "day":
+        n = (end - start).days + 1
+        counts = Counter((d - start).days for d in f["day"]) if not f.empty else Counter()
+        return [counts.get(i, 0) for i in range(n)]
+    counts = Counter(d.month for d in f["day"]) if not f.empty else Counter()
+    return [counts.get(m, 0) for m in range(1, 13)]
+
+
+def walk(h: Hierarchy, gid: str, depth: int = 0, trail: frozenset = frozenset()):
+    """(depth, id) for everything under an umbrella, depth-first. A skill under two umbrellas shows under both."""
+    for c in h.children.get(gid, []):
+        if c in trail or not h.items[c].active:
+            continue
+        yield depth, c
+        if h.items[c].group:
+            yield from walk(h, c, depth + 1, trail | {gid})

@@ -9,7 +9,7 @@ import pandas as pd
 import streamlit as st
 
 import logic
-from views.common import Ctx, dark, refresh_button
+from views.common import Ctx, dark, refresh_button, show_menu
 
 STAT_ICON = {"Strength": "💪", "Endurance": "🏃", "Mobility": "🤸", "Skill": "🥋", "Mind": "🧠", "Spirit": "🤲"}
 SKIN = {"Light": "#f3d2b3", "Medium light": "#e0b48a", "Medium": "#c68e5f", "Medium dark": "#9a6440",
@@ -27,20 +27,59 @@ def page(ctx: Ctx) -> None:
     xp = logic.xp_summary(log, ctx.clock, ctx.per_level)
     since = logic.days_since_good_log(log, ctx.clock)
 
-    st.subheader("Me")
-    c1, c2 = st.columns(2, gap="medium")
-    with c1, st.container(border=True):
-        _character(ctx, xp)
-    with c2, st.container(border=True):
-        _pet(ctx, xp.total, since)
+    head = st.container(horizontal=True, vertical_alignment="center")
+    head.subheader("Me")
+    show = show_menu(ctx, "me", SECTIONS, where=head)
+    cards = [s for s in ("Character", "Pet") if s in show]
+    if cards:
+        for col, which in zip(st.columns(len(cards), gap="medium"), cards):
+            with col, st.container(border=True):
+                if which == "Character":
+                    _character(ctx, xp)
+                else:
+                    _pet(ctx, xp.total, since)
 
-    st.markdown("#### Stats")
-    st.caption("Each stat is the XP from the logs that feed it, so one workout can raise two. Stats only go up.")
-    _stats(logic.stats(items, log, ctx.clock, ctx.settings))
-
-    st.markdown("#### How you compare")
-    _compare(ctx, items, frame)
+    if "Who I'm becoming" in show:
+        _identity(ctx, items, frame)
+    if "Stats" in show:
+        st.markdown("#### Stats")
+        st.caption("Each stat is the XP from the logs that feed it, so one workout can raise two. Stats only go up.")
+        _stats(logic.stats(items, log, ctx.clock, ctx.settings))
+    if "How you compare" in show:
+        st.markdown("#### How you compare")
+        _compare(ctx, items, frame)
     refresh_button(ctx, "me_refresh")
+
+
+SECTIONS = ["Character", "Pet", "Who I'm becoming", "Stats", "How you compare"]
+
+
+def _identity(ctx: Ctx, items: list[logic.Item], frame) -> None:
+    """Each identity and its goals, with this week's work toward them. The full tree is on Track → Goals."""
+    h = logic.build_hierarchy(items)
+    ids = sorted([it for it in items if it.kind == "Identity" and it.active], key=lambda it: it.row)
+    if not ids:
+        return
+    today = ctx.clock.today()
+    week0 = ctx.clock.week_start(today)
+    week = logic.totals(h, frame, week0, today)
+    st.markdown("#### Who I'm becoming")
+    for ident in ids:
+        goals = [h.items[c] for c in h.children.get(ident.id, []) if h.items[c].kind == "Goal" and h.items[c].active]
+        with st.container(border=True):
+            st.markdown(f"**🌱 {html.escape(ident.name)}** · {logic.fmt_totals(week.get(ident.id)) or 'nothing yet'} "
+                        f"this week")
+            lines = []
+            for g in goals:
+                days = logic.days_active(frame, h.leaves(g.id), week0, today)
+                amount = logic.fmt_totals(week.get(g.id))
+                lines.append(f"- 🎯 {html.escape(g.name)}: " + (f"{amount} · {days} day{'s' * (days != 1)}"
+                                                                if amount else "not yet this week"))
+            if lines:
+                st.markdown("\n".join(lines))
+    if "track" in ctx.pages:
+        st.page_link(ctx.pages["track"], label="See the whole tree", icon=":material/account_tree:",
+                     query_params={"v": "Goals", "p": "Week"})
 
 
 # ---------- character ----------

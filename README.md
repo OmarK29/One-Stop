@@ -10,10 +10,9 @@ The same code runs on your Mac and, hosted free, on your phone. Both read and wr
 |---|---|
 | **Guide me** | One question at a time, then **one** action. If that action has an ease ladder, **Hard to start?** starts it at the matching step. That action is the most important item you haven't done yet, chosen from your answers. The buttons are **Did it**, **Another option** and **Not now**, and every walk is saved to *Checkins*. |
 | **Today** | Your pet and any running timers at the top, then **Priorities** (Floor and High items not done, weekly items behind pace), **sleep and screen time** for the day, your pinned umbrellas, then pinned items by block of the day. Filter by domain or hide what's done. *Noticed* holds the unideal items. **Browse all** finds anything else. Undo removes your last tap. Settings → Display picks which sections show. |
-| **Log** | Pick a skill (recent and pinned first; **Other…** to search or drill down umbrella → skill → rung), enter reps and/or time, pick a variant, then **Log**. Tap **+1 / +5 / +10** to count reps as you go. **Same again** repeats your last set in one tap; **Timer** or **Counter** starts one for this skill. |
+| **Track** | Everything you log, three ways: **Trackers** (your printed grids), **Goals** (identity → goal → skills) and **Skills** (your umbrellas). Each opens on **Today**; **Week**, **Month** and **Year** show more, and the arrows step back in time. Trackers' Today is a grid of tiles (tap one to log); Week is the full day-by-column grid with **Print week**; Month and Year show progress only (days you did each column, the total, and a small chart). In the trees, tap any row to log to it. **Log something** opens the quick log (recent and pinned first, search, or drill down). Old `/log` and `/trackers?t=…` links open here. |
 | **Timers** | **Ease ladders** first: when a goal is hard to start, you get a few minutes to start it. If you don't, it beeps and the step gets easier (run an hour → elliptical for 30 → just get on it → go downstairs → change → 5 squats → stand up). **I'm starting** at any step earns XP and starts a timer for the skill that step maps to; once you're going, you can do more. Then as many stopwatches, countdowns and rep counters as you like, at once. Each can belong to a skill; **Log** records its time and reps. Countdowns beep (and buzz on Android) at zero. Timers live in the sheet, so they keep running with the app closed and show on every device. |
-| **Me** | Your character (the belt colour follows your level), six stats (Strength, Endurance, Mobility, Skill, Mind, Spirit) built from the XP of what you log, your pet, and **How you compare**: your best set against common fitness norms, weekly active minutes against the WHO guideline, and sleep, screen time and water against typical figures. Stats only go up, and the pet never gets sick or leaves. It just naps when you've been away. |
-| **Trackers** | Your printed weekly grids: days down the side, your columns across, a weekly total at the bottom. Tap a cell to log for that day. **Print week** gives you the paper version, filled in or blank. |
+| **Me** | **Who I'm becoming**: each identity and its goals with this week's work toward them. Then your character (the belt colour follows your level), six stats (Strength, Endurance, Mobility, Skill, Mind, Spirit) built from the XP of what you log, your pet, and **How you compare**: your best set against common fitness norms, weekly active minutes against the WHO guideline, and sleep, screen time and water against typical figures. Stats only go up, and the pet never gets sick or leaves. It just naps when you've been away. |
 | **Progress** | Lifetime XP (always the biggest number), your level, XP by day for each domain, weekly goals, 14 days of sleep and screen time against your goal and limit, your umbrellas with totals at every level, weekly volume for any skill, how far up each progression you are, what you noticed this week, and recent check-ins. |
 | **Edit** | **Skills** adds or changes one skill or umbrella at a time: its umbrellas, what you enter when logging, its **variants** (same level, different ways) and its **progression** (harder levels, easiest first). Renaming follows the name into Parents, trackers and Guide me. **All items (table)** edits everything at once. Also trackers, the Guide me tree (with a map and a tree check), and settings. |
 | **Setup** | Mac only. Connect the sheet, get the phone setup block, or quit. |
@@ -21,8 +20,9 @@ The same code runs on your Mac and, hosted free, on your phone. Both read and wr
 ## The sheet (you can edit it directly)
 
 - **Items**: what you track.
-  - **Domain** is Physical, Mental or Spiritual. **Kind** is Good, Unideal or Group. **Period** is Daily or Weekly.
+  - **Domain** is Physical, Mental or Spiritual. **Kind** is Good, Unideal, Group, Goal or Identity. **Period** is Daily or Weekly.
   - A **Group** is an umbrella (e.g. Movement → Hypertrophy → Squats). It can't be logged; it adds up everything under it.
+  - **Identity** and **Goal** are umbrellas too, for who you're becoming and what you're working toward: Identity → Goal → skills. List a goal in a skill's or umbrella's Parents and its logs count toward that goal. The app starts you with a draft set to rename or delete.
   - **Parents** lists the umbrellas an item sits under, comma-separated. More than one is fine (Squats sits under Hypertrophy and Endurance), and it still counts once higher up.
   - **Step** is the item's rung in a progression under its umbrella, 1 = easiest. The app shows your current rung (the hardest one you've logged) and keeps the rest one tap away.
   - **Measure** is what you enter when logging: Check (one tap), Reps, Time or Both. **Variants** are choices picked when logging, e.g. `Still, Moving, Jump`.
@@ -43,9 +43,11 @@ The same code runs on your Mac and, hosted free, on your phone. Both read and wr
 
 Rows you type into Items without an ID get one automatically. Item names can't contain commas, since Parents and Maps to are comma-separated; Edit flags this, along with unknown parents and loops.
 
-Filters (domain, hide done, which tracker) live in the page link, e.g. `…/trackers?t=Hypertrophy`, so you can add a Home Screen icon that opens straight to one view.
+Filters live in the page link, e.g. `…/track?v=Goals&p=Week` or `…/track?t=Hypertrophy`, so you can add a Home Screen icon that opens straight to one view.
 
-New tabs (like Timers) are added automatically the first time new code opens your sheet. Sheets made before umbrellas existed are upgraded once, on first open: the new columns are added, the starter skills and umbrellas are appended (only names you don't already have), and Brush teeth, Shower and a few others are filed under them where Parents is blank.
+Every page shows everything by default; scroll to see it all. To hide sections, use the page's **Show** menu (Today, Me and Progress). Your choice is saved in Settings, so it's the same on every device.
+
+New tabs (like Timers and Ladders) and the draft identities and goals are added automatically the first time new code opens your sheet. Sheets made before umbrellas existed are upgraded once, on first open: the new columns are added, the starter skills and umbrellas are appended (only names you don't already have), and Brush teeth, Shower and a few others are filed under them where Parents is blank.
 
 ## Setup on your Mac (once)
 

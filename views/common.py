@@ -4,6 +4,7 @@ from __future__ import annotations
 import time
 from dataclasses import dataclass, field
 
+import pandas as pd
 import streamlit as st
 
 import logic
@@ -49,13 +50,37 @@ class Ctx:
     def display(self, key: str, default: str) -> str:
         return str(self.settings.get(f"display_{key}") or default).strip()
 
-    def today_sections(self) -> list[str]:
-        raw = self.settings.get("display_today")
-        return TODAY_SECTIONS if raw is None or str(raw).strip() == "" else logic.split_list(raw)
+    def sections(self, page: str, options: list[str]) -> list[str]:
+        """Which sections a page shows. Everything until you hide some with its Show menu."""
+        raw = self.settings.get(f"display_{page}")
+        if raw is None or str(raw).strip() == "":
+            return list(options)
+        return [o for o in logic.split_list(raw) if o in options]
 
 
-# What Today can show, in order; Settings → Display picks which.
-TODAY_SECTIONS = ["Timers", "Priorities", "Sleep & screen time", "Skills", "Pinned", "This week", "Noticed", "Pet"]
+def show_menu(ctx: Ctx, page: str, options: list[str], where=None) -> set[str]:
+    """A small 'Show' popover to hide sections of a page; the choice is saved to Settings."""
+    current = ctx.sections(page, options)
+    with (where or st).popover("Show", icon=":material/tune:"):
+        st.caption("Sections on this page")
+        st.pills("Sections", options, selection_mode="multi", default=current, key=f"show_{page}",
+                 label_visibility="collapsed", on_change=_save_sections, args=(ctx, page))
+    return set(current)
+
+
+def _save_sections(ctx: Ctx, page: str) -> None:
+    picked = st.session_state.get(f"show_{page}") or []
+    save_settings(ctx, {f"display_{page}": ", ".join(picked) or "none"})
+
+
+def save_settings(ctx: Ctx, updates: dict) -> None:
+    new = dict(ctx.settings) | updates
+    ctx.store.replace("Settings", pd.DataFrame({"Key": list(new), "Value": list(new.values())}))
+    ctx.settings.update(updates)
+
+
+# What Today can show, in order; its Show menu picks which.
+TODAY_SECTIONS = ["Pet", "Timers", "Priorities", "Sleep & screen time", "Skills", "Pinned", "This week", "Noticed"]
 
 
 def log_item(ctx: Ctx, item: logic.Item, source: str, note: str = "", reps: int = 0, secs: int = 0,

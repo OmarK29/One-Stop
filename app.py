@@ -10,7 +10,7 @@ import streamlit as st
 
 import logic
 import store
-from views import edit, guide, log, me, progress, setup, timers, today, trackers
+from views import edit, guide, me, progress, setup, timers, today, track
 from views.common import Ctx
 
 CSS = """
@@ -108,13 +108,13 @@ def main() -> None:
     if ctx.display("text", "Normal") == "Large":
         st.markdown(LARGE_TEXT_CSS, unsafe_allow_html=True)
 
-    start = ctx.display("start_page", "Guide me")
+    start = {"Log": "Track", "Trackers": "Track"}.get(ctx.display("start_page", "Guide me"),
+                                                       ctx.display("start_page", "Guide me"))
     main_pages = [
         ("Guide me", guide.page, ":material/explore:", "guide"),
         ("Today", today.page, ":material/checklist:", "today"),
-        ("Log", log.page, ":material/add_circle:", "log"),
+        ("Track", track.page, ":material/calendar_view_week:", "track"),
         ("Timers", timers.page, ":material/timer:", "timers"),
-        ("Trackers", trackers.page, ":material/calendar_view_week:", "trackers"),
         ("Me", me.page, ":material/person:", "me"),
     ]
     more_pages = [
@@ -129,6 +129,11 @@ def main() -> None:
         return ctx.pages[path]
 
     nav = {"": [make(*p) for p in main_pages], "More": [make(*p) for p in more_pages]}
+    # Old links (and Home Screen icons) to Log and Trackers open Track, keeping ?t=
+    for old, view in (("log", {}), ("trackers", {"v": "Trackers"})):
+        nav["More"].append(st.Page(lambda view=view: st.switch_page(ctx.pages["track"],
+                                                                     query_params=dict(st.query_params) | view),
+                                   title=old.title(), url_path=old, visibility="hidden"))
     if not cloud:
         nav["More"].append(st.Page(lambda: setup.page(True), title="Setup", icon=":material/settings:",
                                    url_path="setup"))

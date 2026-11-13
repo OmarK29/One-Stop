@@ -132,6 +132,48 @@ _SKILLS = [
 ]
 
 
+# Who you're becoming, and what you're working toward. A draft from what's tracked: rename, delete, add.
+# Identity → Goal → skills: goals are listed in an item's Parents, so a skill can serve several goals and
+# its logs count toward each. (Item, Parents, Kind, Measure, Period, Target, Step, Variants, Pinned, Domain, Notes)
+_DRAFT = "A draft. Rename it in your own words, or delete it."
+GOALS = [
+    ("Steadfast in faith", "", "Identity", "", "Weekly", 0, "", "", False, "Spiritual", _DRAFT),
+    ("Pray all five on time", "Steadfast in faith", "Goal", "", "Weekly", 0, "", "", False, "", ""),
+    ("Understand the Quran", "Steadfast in faith", "Goal", "", "Weekly", 0, "", "", False, "", ""),
+    ("Remember Allah through the day", "Steadfast in faith", "Goal", "", "Weekly", 0, "", "", False, "", ""),
+    ("A strong and capable body", "", "Identity", "", "Weekly", 0, "", "", False, "Physical", _DRAFT),
+    ("Run a half marathon", "A strong and capable body", "Goal", "", "Weekly", 0, "", "", False, "", ""),
+    ("Build strength and calisthenics skills", "A strong and capable body", "Goal", "", "Weekly", 0, "", "", False,
+     "", "Muscle-up, handstand push-up, splits"),
+    ("Keep my joints healthy (RA)", "A strong and capable body", "Goal", "", "Weekly", 0, "", "", False, "", ""),
+    ("Fuel and care for my body", "A strong and capable body", "Goal", "", "Weekly", 0, "", "", False, "", ""),
+    ("A martial artist", "", "Identity", "", "Weekly", 0, "", "", False, "Physical", _DRAFT),
+    ("Train BJJ consistently", "A martial artist", "Goal", "", "Weekly", 0, "", "", False, "", ""),
+    ("Sharpen striking and footwork", "A martial artist", "Goal", "", "Weekly", 0, "", "", False, "", ""),
+    ("A clear and focused mind", "", "Identity", "", "Weekly", 0, "", "", False, "Mental", _DRAFT),
+    ("Show up to class and study", "A clear and focused mind", "Goal", "", "Weekly", 0, "", "", False, "", ""),
+    ("Less phone and more presence", "A clear and focused mind", "Goal", "", "Weekly", 0, "", "", False, "", ""),
+]
+_GOAL_ITEMS = {
+    "Pray all five on time": ["Fajr", "Duhr", "Asr", "Maghrib", "Isha", "Wudu"],
+    "Understand the Quran": ["Quran in English", "Quranic Arabic study"],
+    "Remember Allah through the day": ["Dhikr", "Morning dua"],
+    "Run a half marathon": ["Run (half-marathon training)", "Endurance"],
+    "Build strength and calisthenics skills": ["Hypertrophy", "Isometrics", "Calisthenics skill practice",
+                                               "HC workout"],
+    "Keep my joints healthy (RA)": ["RA meds", "Mobility", "Compression"],
+    "Fuel and care for my body": ["Protein shake", "120g protein", "MyFitnessPal logged", "Hygiene"],
+    "Train BJJ consistently": ["BJJ class", "Ground Drills"],
+    "Sharpen striking and footwork": ["Kicks & Knees", "Hands & Arms", "Footwork", "Balance & Sense", "Offense"],
+    "Show up to class and study": ["Morning class (any length)", "ADHD meds"],
+    "Less phone and more presence": ["5 min no phone", "Devices on charge / no screen", "Journal entry"],
+}
+GOAL_PARENTS: dict[str, list[str]] = {}  # item name -> goals it serves
+for _goal, _names in _GOAL_ITEMS.items():
+    for _n in _names:
+        GOAL_PARENTS.setdefault(_n, []).append(_goal)
+
+
 def skill_row(item_id: str, row: tuple) -> list:
     name, parents, kind, measure, period, target, step, variants, pinned, domain, notes = row
     xp = 5 if kind == "Good" else 0
@@ -142,6 +184,10 @@ def skill_row(item_id: str, row: tuple) -> list:
 ITEMS = [[f"I{i:03d}", *row[:10], True, row[10], ITEM_PARENTS.get(row[0], ""), "", "", "", "", True]
          for i, row in enumerate(_ITEMS, start=1)]
 ITEMS += [skill_row(f"I{i:03d}", row) for i, row in enumerate(_SKILLS, start=len(ITEMS) + 1)]
+ITEMS += [skill_row(f"I{i:03d}", row) for i, row in enumerate(GOALS, start=len(ITEMS) + 1)]
+for _row in ITEMS:  # Parents is column 14
+    if _row[1] in GOAL_PARENTS:
+        _row[13] = ", ".join([p for p in [_row[13]] if p] + GOAL_PARENTS[_row[1]])
 SKILLS = _SKILLS
 
 QUESTIONS_HEADER = ["Node", "Question", "Choice", "Next"]
@@ -189,6 +235,7 @@ SETTINGS = [
     ["screen_time_limit_hours", 2],
     ["pet_name", "Pip"],
     ["ladder_minutes", 5],
+    ["goals_added", True],  # a sheet without this gets the draft identities and goals once
 ]
 
 # Printed-style weekly grids. Maps to = skills or umbrellas (comma-separated); Show = Auto, Reps, Time or Count.

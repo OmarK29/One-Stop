@@ -20,7 +20,7 @@ CACHE_SECONDS = 90
 DROPDOWNS = {  # tab -> column -> allowed values, applied as sheet dropdowns
     "Items": {
         "Domain": ["Physical", "Mental", "Spiritual"],
-        "Kind": ["Good", "Unideal", "Group"],
+        "Kind": ["Good", "Unideal", "Group", "Goal", "Identity"],
         "Period": ["Daily", "Weekly"],
         "Priority": ["Floor", "High", "Normal", "Low"],
         "Measure": ["Check", "Reps", "Time", "Both"],
@@ -174,7 +174,11 @@ class Store:
                 self.ss.del_worksheet(blank)
             except Exception:
                 pass
-        for title in created + (["Items"] if upgrading else []):
+        adding_goals = "Items" not in created and "goals_added" not in self.ws("Settings").col_values(1)
+        if adding_goals:
+            self._add_goals()
+            self.ws("Settings").append_row(["goals_added", True], value_input_option="RAW", table_range="A1")
+        for title in created + (["Items"] if upgrading or adding_goals else []):
             self._add_dropdowns(title)
         self.cache.clear()
         return created
@@ -236,6 +240,39 @@ class Store:
             if skill[0].lower() in names:
                 continue
             rec = dict(zip(seed.ITEMS_HEADER, seed.skill_row(f"I{nxt:03d}", skill)))
+            nxt += 1
+            new.append([_cell(rec.get(h, "")) for h in header])
+        if updates:
+            ws.batch_update(updates, value_input_option="RAW")
+        if new:
+            ws.append_rows(new, value_input_option="RAW", table_range="A1")
+
+    def _add_goals(self) -> None:
+        """Once: add the draft identities and goals, and list each goal in the Parents of the items it covers."""
+        ws = self.ws("Items")
+        values = ws.get_all_values()
+        header = values[0]
+        rows = [(r + [""] * len(header))[:len(header)] for r in values[1:]]
+        col = {h: i for i, h in enumerate(header)}
+        names = {r[col["Item"]].strip().lower() for r in rows if r[col["Item"]].strip()}
+        goal_parents = {k.lower(): v for k, v in seed.GOAL_PARENTS.items()}
+        updates = []
+        for n, r in enumerate(rows, start=2):
+            goals = goal_parents.get(r[col["Item"]].strip().lower())
+            if not goals:
+                continue
+            current = [t.strip() for t in re.split(r"[,;]", r[col["Parents"]]) if t.strip()]
+            extra = [g for g in goals if g.lower() not in {c.lower() for c in current}]
+            if extra:
+                updates.append({"range": f"{_col_letter(col['Parents'] + 1)}{n}",
+                                "values": [[", ".join(current + extra)]]})
+        used = {r[col["ID"]].strip() for r in rows}
+        nxt = max([int(m.group(1)) for i in used if (m := re.fullmatch(r"I(\d+)", i))], default=0) + 1
+        new = []
+        for goal in seed.GOALS:
+            if goal[0].lower() in names:
+                continue
+            rec = dict(zip(seed.ITEMS_HEADER, seed.skill_row(f"I{nxt:03d}", goal)))
             nxt += 1
             new.append([_cell(rec.get(h, "")) for h in header])
         if updates:

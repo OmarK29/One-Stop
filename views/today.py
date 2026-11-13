@@ -10,7 +10,7 @@ import streamlit as st
 import logic
 from views import log as log_view
 from views import me, timers
-from views.common import Ctx, dark, log_item, refresh_button, set_daily_number
+from views.common import TODAY_SECTIONS, Ctx, dark, log_item, refresh_button, set_daily_number, show_menu
 
 SHOW_PRIORITIES = 5
 
@@ -24,11 +24,11 @@ def page(ctx: Ctx) -> None:
     xp = logic.xp_summary(log, ctx.clock, ctx.per_level)
     today = ctx.clock.today()
 
-    show = set(ctx.today_sections())
-    with st.container(horizontal=True, vertical_alignment="center"):
+    with st.container(horizontal=True, vertical_alignment="center") as row:
         domains = st.pills("Domain", logic.DOMAINS, selection_mode="multi", key="d", bind="query-params",
                            label_visibility="collapsed")
         hide_done = st.toggle("Hide done", key="hide", bind="query-params")
+        show = show_menu(ctx, "today", TODAY_SECTIONS, where=row)
 
     def shown(it: logic.Item) -> bool:
         return it.active and (not domains or it.domain in domains)

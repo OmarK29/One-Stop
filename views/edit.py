@@ -10,7 +10,7 @@ import streamlit as st
 
 import logic
 import seed
-from views.common import TODAY_SECTIONS, Ctx
+from views.common import Ctx
 from views.me import HAIR, SKIN
 
 CC = st.column_config
@@ -225,7 +225,7 @@ def _zones() -> list[str]:
 def _settings(ctx: Ctx) -> None:
     s, clock = ctx.settings, ctx.clock
     zones = _zones()
-    pages = ["Guide me", "Today", "Log", "Timers", "Trackers", "Me", "Progress"]
+    pages = ["Guide me", "Today", "Track", "Timers", "Me", "Progress"]
     with st.form("settings"):
         st.markdown("##### Day and XP")
         tz = st.selectbox("Time zone", zones, index=zones.index(clock.timezone) if clock.timezone in zones else 0)
@@ -243,8 +243,7 @@ def _settings(ctx: Ctx) -> None:
                               index=_index(["Comfortable", "Compact"], ctx.display("layout", "Comfortable")))
         text = c3.selectbox("Text size", ["Normal", "Large"],
                             index=_index(["Normal", "Large"], ctx.display("text", "Normal")))
-        sections = st.multiselect("Show on Today", TODAY_SECTIONS,
-                                  default=[x for x in ctx.today_sections() if x in TODAY_SECTIONS])
+        st.caption("To hide sections of a page, use its **Show** menu (top of Today, Me and Progress).")
 
         ladder_min = st.number_input("Ease ladders: minutes to start each step", 1, 120,
                                      logic.to_int(s.get("ladder_minutes"), 5),
@@ -277,7 +276,6 @@ def _settings(ctx: Ctx) -> None:
             new.update({"timezone": tz, "day_starts_at_hour": int(start), "week_starts_on": week,
                         "xp_per_level": int(per_level), "ladder_minutes": int(ladder_min),
                         "display_start_page": start_page, "display_layout": layout, "display_text": text,
-                        "display_today": ", ".join(sections) or "none",
                         "track_sleep": track_sleep, "sleep_goal_hours": sleep,
                         "track_screen_time": track_screen, "screen_time_limit_hours": screen,
                         "profile_age": int(age), "profile_sex": "" if sex == "Not set" else sex,
@@ -293,7 +291,9 @@ def _index(options: list[str], value) -> int:
 
 # ---------- one skill at a time ----------
 
-NEW_SKILL, NEW_GROUP = "__new_skill__", "__new_group__"
+NEW_SKILL, NEW_GROUP, NEW_GOAL, NEW_IDENTITY = "__new_skill__", "__new_group__", "__new_goal__", "__new_identity__"
+NEW_KIND = {NEW_SKILL: "Good", NEW_GROUP: "Group", NEW_GOAL: "Goal", NEW_IDENTITY: "Identity"}
+KIND_LABEL = {"Group": "Umbrella", "Goal": "Goal", "Identity": "Identity"}
 
 
 def _skill_editor(ctx: Ctx) -> None:
@@ -302,30 +302,32 @@ def _skill_editor(ctx: Ctx) -> None:
     items = logic.parse_items(df)
     h = logic.build_hierarchy(items)
     ordered = [it for it in sorted(items, key=lambda it: it.row) if it.kind != "Unideal"]
-    options = [NEW_SKILL, NEW_GROUP] + [it.id for it in ordered]
+    options = list(NEW_KIND) + [it.id for it in ordered]
 
     def label(i: str) -> str:
-        if i == NEW_SKILL:
-            return "➕ New skill"
-        if i == NEW_GROUP:
-            return "➕ New umbrella"
+        if i in NEW_KIND:
+            return "➕ New " + {"Good": "skill"}.get(NEW_KIND[i], KIND_LABEL.get(NEW_KIND[i], "").lower())
         it = h.items[i]
-        return " · ".join(b for b in (it.name + (" ▸" if it.group else ""), h.path(i)) if b)
+        mark = {"Identity": "🌱 ", "Goal": "🎯 "}.get(it.kind, "")
+        return " · ".join(b for b in (mark + it.name + (" ▸" if it.group else ""), h.path(i)) if b)
 
     if "sk_pending" in st.session_state:  # set by a save, before the selectbox exists this run
         st.session_state.sk_sel = st.session_state.pop("sk_pending")
-    st.caption("**Variants** are the same level done different ways (Still, Moving, Jump). A **progression** is "
-               "levels of difficulty under one umbrella (Squat → Single-leg squat → Stair squat), easiest first.")
-    sel = st.selectbox("Skill or umbrella", options, index=None, key="sk_sel", format_func=label,
+    st.caption("**Identity** is who you're becoming; **goals** sit under it, and skills and umbrellas sit under "
+               "goals. **Variants** are the same level done different ways (Still, Moving, Jump). A **progression** "
+               "is levels of difficulty under one umbrella (Squat → Single-leg squat → Stair squat), easiest first.")
+    sel = st.selectbox("Skill, umbrella, goal or identity", options, index=None, key="sk_sel", format_func=label,
                        placeholder="Pick one to change, or add a new one")
     if sel is None:
         return
     it = h.items.get(sel)
-    group = sel == NEW_GROUP or (it is not None and it.group)
-    _skill_form(ctx, df, h, it, group)
+    kind = it.kind if it else NEW_KIND[sel]
+    _skill_form(ctx, df, h, it, kind)
     if it is None:
         return
-    if it.group:
+    if it.kind in ("Goal", "Identity"):
+        _beneath_picker(ctx, df, h, it)
+    elif it.group:
         _progression(ctx, df, h, it)
     elif h.ladder_of(it.id):
         gid = h.ladder_of(it.id)
@@ -341,16 +343,27 @@ def _select_item(iid: str) -> None:
     st.session_state.sk_sel = iid
 
 
-def _skill_form(ctx: Ctx, df: pd.DataFrame, h: logic.Hierarchy, it: logic.Item | None, group: bool) -> None:
+def _skill_form(ctx: Ctx, df: pd.DataFrame, h: logic.Hierarchy, it: logic.Item | None, kind: str) -> None:
+    group = kind in logic.GROUP_KINDS
     raw = _raw_row(df, it.id) if it else {}
     below = {it.id} | _beneath(h, it.id) if it else set()
-    groups = [g for g in sorted(h.items.values(), key=lambda g: g.row) if g.group and g.id not in below]
+    # Identities sit at the top; goals sit under identities; everything else can sit under any umbrella or goal.
+    allowed = {"Identity": (), "Goal": ("Identity",)}.get(kind, ("Group", "Goal"))
+    groups = [g for g in sorted(h.items.values(), key=lambda g: g.row) if g.kind in allowed and g.id not in below]
     current = [h.items[p].name for p in h.parents.get(it.id, [])] if it else []
 
-    with st.form(f"sk_form_{it.id if it else ('g' if group else 's')}"):
-        name = st.text_input("Name", value=it.name if it else "", max_chars=80)
-        parents = st.multiselect("Under these umbrellas", [g.name for g in groups], default=current,
-                                 help="More than one is fine. Leave empty for a top-level umbrella.")
+    with st.form(f"sk_form_{it.id if it else kind}"):
+        name = st.text_input("Name", value=it.name if it else "", max_chars=80,
+                             placeholder={"Identity": "e.g. A martial artist", "Goal": "e.g. Run a half marathon"}
+                             .get(kind, ""))
+        if group:
+            kind = st.segmented_control("Type", list(KIND_LABEL), default=kind, format_func=KIND_LABEL.get,
+                                        required=True)
+        parents = st.multiselect({"Goal": "Under these identities", "Identity": "Under (identities are the top)"}
+                                 .get(kind, "Under these umbrellas or goals"),
+                                 [g.name for g in groups] + [c for c in current if c not in {g.name for g in groups}],
+                                 default=current, disabled=kind == "Identity" and not current,
+                                 help="More than one is fine.")
         if not group:
             measure = st.segmented_control("When you log it, enter", logic.MEASURES,
                                            default=it.measure if it else "Reps",
@@ -388,7 +401,7 @@ def _skill_form(ctx: Ctx, df: pd.DataFrame, h: logic.Hierarchy, it: logic.Item |
     if problem:
         st.error(problem)
         return
-    values = {"Item": name, "Kind": "Group" if group else "Good", "Parents": ", ".join(parents),
+    values = {"Item": name, "Kind": kind, "Parents": ", ".join(parents),
               "Period": period, "Target": int(target), "Unit": unit,
               "Priority": "" if prio == "Same as umbrella" else prio,
               "Domain": "" if domain == "Same as umbrella" else domain,
@@ -404,6 +417,26 @@ def _skill_form(ctx: Ctx, df: pd.DataFrame, h: logic.Hierarchy, it: logic.Item |
         if name != it.name:
             df = _rename(ctx, df, it.name, name)
         _write_items(ctx, df)
+
+
+def _beneath_picker(ctx: Ctx, df: pd.DataFrame, h: logic.Hierarchy, g: logic.Item) -> None:
+    """What sits under a goal (skills and umbrellas) or an identity (goals). Changes their Parents."""
+    want = ("Goal",) if g.kind == "Identity" else ("Good", "Group")
+    candidates = [it for it in sorted(h.items.values(), key=lambda it: it.row)
+                  if it.kind in want and it.active and it.id != g.id]
+    current = [c for c in h.children.get(g.id, []) if h.items[c].kind in want]
+    st.markdown(f"#### {'Goals' if g.kind == 'Identity' else 'Skills and umbrellas'} under {g.name}")
+    picked = st.multiselect("Under it", [it.id for it in candidates], default=current, key=f"sk_under_{g.id}",
+                            format_func=lambda i: " · ".join(b for b in (h.items[i].name, h.path(i)) if b),
+                            label_visibility="collapsed",
+                            help="An umbrella brings everything beneath it, so its logs count toward this too.")
+    if not st.button("Save", type="primary", key=f"sk_save_under_{g.id}", icon=":material/save:"):
+        return
+    for iid in set(picked) ^ set(current):
+        it = h.items[iid]
+        keep = [p for p in it.parents if h.lookup.get(p.lower()) != g.id]
+        df = _set(df, iid, {"Parents": ", ".join(keep + ([g.name] if iid in picked else []))})
+    _write_items(ctx, df)
 
 
 def _progression(ctx: Ctx, df: pd.DataFrame, h: logic.Hierarchy, g: logic.Item) -> None:
