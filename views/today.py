@@ -9,7 +9,7 @@ import streamlit as st
 
 import logic
 from views import log as log_view
-from views import me, timers
+from views import add, me, timers
 from views.common import TODAY_SECTIONS, Ctx, dark, log_item, refresh_button, set_daily_number, show_menu
 
 SHOW_PRIORITIES = 5
@@ -38,7 +38,10 @@ def page(ctx: Ctx) -> None:
     floor = [it for it in good if it.priority == "Floor" and it.period == "Daily" and it.target]
     floor_done = sum(logic.is_done(it, counts) for it in floor)
 
-    st.subheader(today.strftime("%A, %b %-d"))
+    head = st.container(horizontal=True, vertical_alignment="center")
+    head.subheader(today.strftime("%A, %b %-d"))
+    if head.button("Add", icon=":material/add:", key="today_add", help="Start tracking something new"):
+        add.open_add(ctx)
     st.markdown(f"<div class='stat-line'><b>{xp.today}</b> XP today · <b>{xp.week}</b> this week · "
                 f"Floor <b>{floor_done}/{len(floor)}</b></div>", unsafe_allow_html=True)
     if floor and floor_done == len(floor):

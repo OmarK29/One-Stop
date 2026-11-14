@@ -8,6 +8,7 @@ import time
 import streamlit as st
 
 import logic
+from views import celebrate
 from views import log as log_view
 from views.common import Ctx, log_item, start_timer
 from views.timers import clock, quick_skill_form
@@ -196,12 +197,13 @@ def _finish(ctx: Ctx, h: logic.Hierarchy, frame, s: logic.Timer, done) -> None:
             prev = {k: max(prev.get(k, 0), v) for k, v in {"reps": r.reps, "secs": r.secs, "weight": r.weight,
                                                            "dist": r.dist, "volume": r.reps * r.weight}.items()} \
                 if prev else prev
-    summary = f"{len(done)} sets · {len(names)} skill{'s' * (len(names) != 1)}"
+    summary = f"{len(done)} set{'s' * (len(done) != 1)} · {len(names)} skill{'s' * (len(names) != 1)}"
     workout = logic.Item(id=logic.WORKOUT_ID, name=s.label, domain="Physical", kind="Good", period="Daily", target=0,
                          xp=WORKOUT_XP, priority="Normal", block="", tags=[], counters=[], active=True, notes="",
                          row=10**6)
     log_item(ctx, workout, "Workout", note=summary, secs=secs, session=sid, frame=frame, check_bests=False)
     _end(ctx, s)
+    celebrate.queue("workout")
     st.session_state.wk_flash = (f"{s.label} done: {logic.fmt_secs(secs)} · {summary}"
                                  + (f" · new bests: {'; '.join(bests)}" if bests else "") + f". +{WORKOUT_XP} XP.")
     st.rerun()

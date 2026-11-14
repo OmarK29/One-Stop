@@ -7,6 +7,7 @@ import time
 import streamlit as st
 
 import logic
+from views import celebrate
 from views.common import Ctx, add_variant, log_item, start_timer
 
 OTHER = "__other__"
@@ -27,6 +28,8 @@ def panel(ctx: Ctx, scope: list[str] | None = None, day: dt.date | None = None, 
           in_dialog: bool = False) -> None:
     """`scope` limits the picker to these items/umbrellas; `day` logs for an earlier day."""
     ss = st.session_state
+    if in_dialog:  # a log inside the dialog reruns only the dialog, so it plays its own sound
+        celebrate.play(ctx.settings, where="dialog")
     h = logic.build_hierarchy(ctx.items())
     frame = logic.log_frame(ctx.log(), ctx.clock)
     roots = [i for i in (scope or []) if i in h.items] or None
@@ -178,6 +181,10 @@ def _form(ctx: Ctx, h: logic.Hierarchy, it: logic.Item, frame, day: dt.date, key
         if "timers" in ctx.pages:
             st.switch_page(ctx.pages["timers"])
         st.rerun()
+    if "manage" in ctx.pages and row.button("Edit", icon=":material/tune:", type="tertiary", key=f"{key}_edit",
+                                            help="Change its inputs, variants, goal and more"):
+        ss["sk_pending"] = it.id  # Manage → Skills opens on it
+        st.switch_page(ctx.pages["manage"])
     if in_dialog and row.button("Done", icon=":material/check:", type="tertiary", key=f"{key}_done"):
         st.rerun()
 

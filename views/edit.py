@@ -10,6 +10,8 @@ import streamlit as st
 
 import logic
 import seed
+from views import celebrate
+from views.celebrate import SOUNDS
 from views.common import Ctx
 from views.me import HAIR, SKIN
 
@@ -152,18 +154,105 @@ def _beneath(h: logic.Hierarchy, gid: str) -> set[str]:
 
 
 def _trackers(ctx: Ctx) -> None:
-    st.markdown("Each tracker is a weekly grid like your printed sheets: one row per column. **Maps to** is one "
-                "or more items or umbrellas (comma-separated); an umbrella counts everything under it. **Show** "
-                "picks what a cell displays: Auto shows reps and/or time, else a tick or count.")
+    """Trackers without a table: pick one, then add, reorder, rename or remove its columns."""
+    ss = st.session_state
+    st.caption("Each tracker is a weekly grid like your printed sheets. A column counts one or more things; "
+               "an umbrella counts everything under it.")
     df = ctx.store.read("Trackers")
-    edited = st.data_editor(
-        _editor_df(df, ["Tracker", "Column", "Maps to", "Show"]), key="ed_tr", num_rows="dynamic",
-        hide_index=True, width="stretch",
-        column_config={"Tracker": CC.TextColumn(required=True, width="small"),
-                       "Column": CC.TextColumn(required=True, width="medium"),
-                       "Maps to": CC.TextColumn(width="large"),
-                       "Show": CC.SelectboxColumn(options=logic.SHOWS, default="Auto")})
-    _save(ctx, "Trackers", edited, "ed_tr")
+    rows = [r for r in df.to_dict("records") if str(r.get("Tracker", "")).strip() and str(r.get("Column", "")).strip()]
+    names = list(dict.fromkeys(str(r["Tracker"]).strip() for r in rows))
+    if ss.get("ed_tr_pending") in names:  # just created or renamed: select it before the selectbox exists
+        ss.ed_tr_pick = ss.pop("ed_tr_pending")
+    if ss.get("ed_tr_pick") not in names:
+        ss.pop("ed_tr_pick", None)
+    head = st.container(horizontal=True, vertical_alignment="bottom")
+    pick = head.selectbox("Tracker", names, key="ed_tr_pick", placeholder="No trackers yet")
+    with head.popover("New tracker", icon=":material/add:"):
+        new = st.text_input("Name", key="ed_tr_new", placeholder="e.g. Evening")
+        if st.button("Create", key="ed_tr_create", disabled=not new.strip()) and new.strip() not in names:
+            ss.ed_tr_pending = new.strip()
+            ss.ed_tr_fresh = new.strip()  # an empty tracker exists only once it has a column
+            st.rerun()
+    pick = ss.get("ed_tr_fresh") if ss.get("ed_tr_fresh") and ss.get("ed_tr_fresh") not in names else pick
+    if pick:
+        cols = [r for r in rows if str(r["Tracker"]).strip() == pick]
+        if not cols:
+            st.info(f"{pick} is new. Add its first column below.")
+        for i, r in enumerate(cols):
+            with st.container(border=True):
+                row = st.container(horizontal=True, wrap=False, vertical_alignment="center")
+                with row.container(gap=None):
+                    st.markdown(f"**{r['Column']}**")
+                    st.caption(f"Counts: {r.get('Maps to') or '—'} · shows {r.get('Show') or 'Auto'}")
+                if row.button("", icon=":material/arrow_upward:", key=f"ed_tr_up_{i}", disabled=i == 0, help="Up"):
+                    _tracker_write(ctx, rows, pick, _swap(cols, i, i - 1))
+                if row.button("", icon=":material/arrow_downward:", key=f"ed_tr_dn_{i}", disabled=i == len(cols) - 1,
+                              help="Down"):
+                    _tracker_write(ctx, rows, pick, _swap(cols, i, i + 1))
+                if row.button("", icon=":material/delete:", key=f"ed_tr_rm_{i}", help="Remove column"):
+                    _tracker_write(ctx, rows, pick, cols[:i] + cols[i + 1:])
+        _tracker_column_form(ctx, rows, pick, cols)
+        if names and pick in names:
+            with st.expander("Rename or delete this tracker"):
+                new_name = st.text_input("Name", value=pick, key=f"ed_tr_rn_{pick}")
+                c = st.container(horizontal=True)
+                if c.button("Rename", key="ed_tr_rename", disabled=not new_name.strip() or new_name.strip() in names):
+                    for r in rows:
+                        if str(r["Tracker"]).strip() == pick:
+                            r["Tracker"] = new_name.strip()
+                    ss.ed_tr_pending = new_name.strip()
+                    _tracker_write(ctx, rows, None, None)
+                if c.button("Delete tracker", key="ed_tr_delete", type="tertiary", icon=":material/delete:"):
+                    _tracker_write(ctx, rows, pick, [])
+    with st.expander("Edit all trackers as a table"):
+        edited = st.data_editor(
+            _editor_df(df, ["Tracker", "Column", "Maps to", "Show"]), key="ed_tr", num_rows="dynamic",
+            hide_index=True, width="stretch",
+            column_config={"Tracker": CC.TextColumn(required=True, width="small"),
+                           "Column": CC.TextColumn(required=True, width="medium"),
+                           "Maps to": CC.TextColumn(width="large"),
+                           "Show": CC.SelectboxColumn(options=logic.SHOWS, default="Auto")})
+        _save(ctx, "Trackers", edited, "ed_tr")
+
+
+def _tracker_column_form(ctx: Ctx, rows: list[dict], tracker: str, cols: list[dict]) -> None:
+    items = ctx.items()
+    h = logic.build_hierarchy(items)
+    choices = [it.id for it in sorted(items, key=lambda it: it.row) if it.active and (it.good or it.group)]
+    with st.expander("Add a column", icon=":material/add:", expanded=not cols):
+        with st.form(f"ed_tr_add_{tracker}", border=False):
+            what = st.multiselect("What it counts", choices, format_func=lambda i: " · ".join(
+                b for b in (h.items[i].name + (" ▸" if h.items[i].group else ""), h.path(i)) if b),
+                help="One or more skills, habits or umbrellas")
+            name = st.text_input("Column name (optional)", placeholder="Defaults to the first thing's name")
+            show = st.segmented_control("Each cell shows", logic.SHOWS, default="Auto", required=True,
+                                        help="Auto: reps and/or time, else a tick or count")
+            if st.form_submit_button("Add column", type="primary"):
+                if not what:
+                    st.error("Pick at least one thing to count.")
+                    return
+                col = {"Tracker": tracker, "Column": (name.strip() or h.items[what[0]].name).replace(",", " /"),
+                       "Maps to": ", ".join(h.items[i].name for i in what), "Show": show}
+                st.session_state.ed_tr_fresh = None
+                _tracker_write(ctx, rows, tracker, cols + [col])
+
+
+def _swap(cols: list[dict], a: int, b: int) -> list[dict]:
+    out = list(cols)
+    out[a], out[b] = out[b], out[a]
+    return out
+
+
+def _tracker_write(ctx: Ctx, rows: list[dict], tracker: str | None, new_cols: list[dict] | None) -> None:
+    """Replace one tracker's columns (keeping its place among the others), or just write `rows` as they are."""
+    if tracker is not None:
+        at = next((i for i, r in enumerate(rows) if str(r["Tracker"]).strip() == tracker), len(rows))
+        others = [r for r in rows if str(r["Tracker"]).strip() != tracker]
+        rows = others[:at] + list(new_cols or []) + others[at:]
+    ctx.store.replace("Trackers", pd.DataFrame([{k: r.get(k, "") for k in ("Tracker", "Column", "Maps to", "Show")}
+                                                for r in rows]))
+    st.toast("Saved trackers", icon="💾")
+    st.rerun()
 
 
 def _ladders(ctx: Ctx) -> None:
@@ -289,6 +378,13 @@ def _settings(ctx: Ctx) -> None:
                                      logic.to_int(s.get("ladder_minutes"), 5),
                                      help="Used when a step's Minutes is blank. Change one ladder on Manage → Ladders.")
 
+        st.markdown("##### Sounds")
+        c1, c2, c3 = st.columns(3)
+        snd_log = c1.selectbox("Each log", SOUNDS, index=_index(SOUNDS, s.get("sound_log") or "Pop"))
+        snd_big = c2.selectbox("Big moments", SOUNDS, index=_index(SOUNDS, s.get("sound_big") or "Fanfare"),
+                               help="Finishing a goal, a new best, a workout, or starting a ladder step")
+        volume = c3.slider("Volume", 0, 100, logic.to_int(s.get("sound_volume"), 60), step=10)
+
         st.markdown("##### Workouts and units")
         c1, c2, c3 = st.columns(3)
         rest_default = c1.number_input("Rest between sets (s)", 0, 1800, logic.to_int(s.get("rest_seconds"), 90),
@@ -328,10 +424,19 @@ def _settings(ctx: Ctx) -> None:
                         "track_screen_time": track_screen, "screen_time_limit_hours": screen,
                         "profile_age": int(age), "profile_sex": "" if sex == "Not set" else sex,
                         "rest_seconds": int(rest_default), "weight_unit": w_unit, "distance_unit": d_unit,
+                        "sound_log": snd_log, "sound_big": snd_big, "sound_volume": int(volume),
                         "avatar_skin": skin, "avatar_hair": hair, "pet_name": pet.strip() or "Pip"})
             ctx.store.replace("Settings", pd.DataFrame({"Key": list(new), "Value": list(new.values())}))
             st.toast("Settings saved", icon="💾")
             st.rerun()
+    row = st.container(horizontal=True)
+    if row.button("Hear a log", icon=":material/volume_up:", type="tertiary", key="snd_test_log",
+                  help="Plays the saved sound; save settings first after changing it"):
+        celebrate.queue("test_log")
+        st.rerun()
+    if row.button("Hear a big moment", icon=":material/celebration:", type="tertiary", key="snd_test_big"):
+        celebrate.queue("test_big")
+        st.rerun()
 
 
 def _index(options: list[str], value) -> int:

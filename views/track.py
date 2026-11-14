@@ -10,6 +10,7 @@ import pandas as pd
 import streamlit as st
 
 import logic
+from views import add
 from views import log as log_view
 from views.common import Ctx, refresh_button
 
@@ -21,8 +22,11 @@ def page(ctx: Ctx) -> None:
     ss = st.session_state
     head = st.container(horizontal=True, vertical_alignment="center")
     head.subheader("Track")
-    if head.button("Log something", icon=":material/add:", type="primary", key="tr_log_any"):
+    if head.button("Log", icon=":material/edit:", type="primary", key="tr_log_any", help="Log something"):
         log_view.open_dialog(ctx, "Log something")
+    if head.button("Add", icon=":material/add:", key="tr_add", help="Start tracking something new"):
+        view = st.session_state.get("v") or "Trackers"
+        add.open_add(ctx, tracker=st.session_state.get("t") if view == "Trackers" else None)
 
     view = st.segmented_control("View", VIEWS, default="Trackers", required=True, key="v", bind="query-params",
                                 label_visibility="collapsed")

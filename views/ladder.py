@@ -10,7 +10,7 @@ import pandas as pd
 import streamlit as st
 
 import logic
-from views import timers
+from views import celebrate, timers
 from views.common import Ctx, log_item, start_ladder, start_timer
 
 
@@ -104,6 +104,7 @@ def _started(ctx: Ctx, h: logic.Hierarchy, run: logic.Timer, rungs: list[logic.R
             start_timer(ctx, item, "Counter" if item.inputs == ["Reps"] else "Stopwatch")
             follow = f" A {'counter' if item.inputs == ['Reps'] else 'timer'} for {item.name} is running below."
     more = f" Once you're going, “{rungs[i - 1].do}” is fair game, but you don't owe it." if i > 0 else ""
+    celebrate.queue("ladder")
     st.session_state.ladder_flash = f"You started: {r.do}. That was the hard part. +{logic.LADDER_XP} XP.{follow}{more}"
     st.rerun()
 

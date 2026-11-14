@@ -4,14 +4,45 @@ from __future__ import annotations
 
 import hmac
 import json
+import os
+import sys
 from pathlib import Path
 
 import streamlit as st
 
-import logic
-import store
-from views import edit, guide, me, progress, setup, timers, today, track, workout
-from views.common import Ctx
+OURS = ("logic", "store", "seed", "views")
+
+
+def _reload_if_updated() -> None:
+    """A running server keeps our modules imported between reruns. After an update (a git pull here, a redeploy
+    on Streamlit Cloud) only some files may be re-read, mixing old and new code. If any of our files changed
+    since it was loaded, drop them all so they import fresh, together, and rebuild the cached sheet connection."""
+    seen = sys.__dict__.setdefault("_one_stop_mtimes", {})
+    ours = {n: m for n, m in sys.modules.items() if n.split(".")[0] in OURS}  # incl. the views package itself
+    if any(seen.get(n) not in (None, _mtime(m.__file__)) for n, m in ours.items() if getattr(m, "__file__", None)):
+        for n in ours:
+            del sys.modules[n]
+        seen.clear()
+        st.cache_resource.clear()
+
+
+def _mtime(path: str) -> float | None:
+    try:
+        return os.path.getmtime(path)
+    except OSError:
+        return None
+
+
+_reload_if_updated()
+
+import logic  # noqa: E402  (after the reload check, on purpose)
+import store  # noqa: E402
+from views import celebrate, edit, guide, me, progress, setup, timers, today, track, workout  # noqa: E402
+from views.common import Ctx  # noqa: E402
+
+for _n, _m in list(sys.modules.items()):  # remember when each of our modules was loaded
+    if _n.split(".")[0] in OURS and getattr(_m, "__file__", None):
+        sys.__dict__["_one_stop_mtimes"].setdefault(_n, _mtime(_m.__file__))
 
 CSS = """
 <style>
@@ -140,6 +171,7 @@ def main() -> None:
         nav["More"].append(st.Page(lambda: setup.page(True), title="Setup", icon=":material/settings:",
                                    url_path="setup"))
     current = st.navigation(nav, position="top")
+    celebrate.play(settings)
     if current.url_path != "workout":
         workout.banner(ctx)
     current.run()

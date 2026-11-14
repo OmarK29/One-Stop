@@ -9,6 +9,7 @@ import streamlit as st
 
 import logic
 from store import Store
+from views import celebrate
 
 DOMAIN_ICON = {"Physical": "💪", "Mental": "🧠", "Spiritual": "🤲"}
 
@@ -111,6 +112,11 @@ def log_item(ctx: Ctx, item: logic.Item, source: str, note: str = "", reps: int 
     hits = logic.new_bests(logic.bests(frame, item.id), {"reps": reps, "secs": secs, "weight": weight,
                                                          "dist": dist}) if check_bests else []
     earned = (item.xp if xp is None else xp) if item.good else 0
+    goal = False  # did this log finish the item's goal for today or this week?
+    if item.good and item.target:
+        start = day if item.period == "Daily" else ctx.clock.week_start(day)
+        before = logic.leaf_totals(frame, start, day).get(item.id, logic.Totals()).amount(item.unit)
+        goal = before < item.target <= before + logic.Totals(1, reps or 0, secs or 0).amount(item.unit)
     ctx.store.append_dicts("Log", [{
         "Timestamp": ctx.clock.stamp(), "Day": day.isoformat(), "Item ID": item.id, "Item": item.name,
         "Domain": item.domain, "Kind": item.kind, "XP": earned, "Source": source, "Note": note, "Reps": reps or "",
@@ -120,6 +126,10 @@ def log_item(ctx: Ctx, item: logic.Item, source: str, note: str = "", reps: int 
         {"reps": reps, "secs": secs, "weight": weight, "dist": dist})) if b and b != "✓")
     if hits:
         st.toast(f"New best · {item.name}: {', '.join(hits)}", icon="🏆")
+    if goal:
+        st.toast(f"{item.name}: goal done {'today' if item.period == 'Daily' else 'this week'}", icon="🎉")
+    if item.good:
+        celebrate.queue("best" if hits else "goal" if goal else "log")
     if item.good:
         st.toast((f"+{earned} XP · " if earned else "") + (f"Set {set_no} · " if set_no else "") + what, icon="✅")
     else:
@@ -199,6 +209,8 @@ def set_daily_number(ctx: Ctx, num: logic.DailyNumber, day, minutes: int) -> Non
         ctx.store.append("Log", list(row.values()))
     else:
         ctx.store.update_row("Log", int(same["_row"].iloc[-1]), row)
+    if num.met(minutes):
+        celebrate.queue("log")
     verdict = ("under your limit" if num.at_most else "goal met") if num.met(minutes) else \
         ("over your limit, noted" if num.at_most else "under your goal")
     st.toast(f"{num.name} {logic.fmt_hm(minutes)} · {verdict}" + (f" · +{xp} XP" if xp else ""),

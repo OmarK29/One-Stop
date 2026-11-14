@@ -28,7 +28,8 @@ export default function(component) {
   };
   const beep = () => {
     try {
-      const ctx = new (window.AudioContext || window.webkitAudioContext)();
+      const ctx = window.__osAudio || (window.__osAudio = new (window.AudioContext || window.webkitAudioContext)());
+      if (ctx.state === 'suspended') ctx.resume();
       [0, 0.3, 0.6].forEach((at) => {
         const o = ctx.createOscillator(), g = ctx.createGain();
         o.frequency.value = 880; o.connect(g); g.connect(ctx.destination);
